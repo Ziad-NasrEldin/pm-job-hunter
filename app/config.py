@@ -106,6 +106,7 @@ class Settings:
     lever_companies: list[str] = field(default_factory=list)
     facebook_enabled: bool = True
     facebook_profile_dir: str = "./data/facebook_profile"
+    facebook_storage_state_path: str = "./data/facebook_storage_state.json"
     facebook_headless: bool = False
     facebook_crawl_days: int = 30
     facebook_retention_days: int = 90
@@ -174,6 +175,7 @@ class Settings:
             lever_companies=_get_list("LEVER_COMPANIES", []),
             facebook_enabled=_get_bool("FACEBOOK_ENABLED", True),
             facebook_profile_dir=os.getenv("FACEBOOK_PROFILE_DIR", "./data/facebook_profile"),
+            facebook_storage_state_path=os.getenv("FACEBOOK_STORAGE_STATE_PATH", "./data/facebook_storage_state.json"),
             facebook_headless=_get_bool("FACEBOOK_HEADLESS", False),
             facebook_crawl_days=_get_int("FACEBOOK_CRAWL_DAYS", 30),
             facebook_retention_days=_get_int("FACEBOOK_RETENTION_DAYS", 90),
@@ -206,5 +208,8 @@ class Settings:
     def ensure_runtime_dirs(self) -> None:
         self.ensure_db_dir()
         Path(self.facebook_profile_dir).mkdir(parents=True, exist_ok=True)
+        storage_path = Path(self.facebook_storage_state_path)
+        if storage_path.parent:
+            storage_path.parent.mkdir(parents=True, exist_ok=True)
         Path(self.facebook_screenshots_dir).mkdir(parents=True, exist_ok=True)
         Path(self.facebook_raw_dir).mkdir(parents=True, exist_ok=True)

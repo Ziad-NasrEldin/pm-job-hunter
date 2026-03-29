@@ -24,10 +24,12 @@ from app.facebook_time import parse_facebook_time
 from app.models import FacebookGroupCandidate, FacebookPost
 
 try:  # pragma: no cover - optional dependency for non-Facebook test paths
-    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import Browser, BrowserContext, Error as PlaywrightError
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import Locator, sync_playwright
 except Exception:  # noqa: BLE001
+    Browser = object
+    BrowserContext = object
     PlaywrightError = Exception
     PlaywrightTimeoutError = Exception
     Locator = object
@@ -55,6 +57,11 @@ _GROUP_URL_EXCLUDE_TOKENS = [
     "/groups/?ref",
 ]
 
+_GROUP_NAME_NOISE_PREFIXES = [
+    "profile photo of ",
+    "صورة الملف الشخصي لـ",
+]
+
 
 class FacebookGroupsAdapter:
     source_name = "facebook_groups"
@@ -66,22 +73,51 @@ class FacebookGroupsAdapter:
         if sync_playwright is None:
             raise RuntimeError("Playwright is not installed. Run: pip install -r requirements.txt")
 
-    def _open_context(self, *, headless: bool):
+    def _open_login_context(self, *, headless: bool):
         self._require_playwright()
         playwright = sync_playwright().start()
+        browser: Browser | None = None
+        context: BrowserContext | None = None
         try:
-            context = playwright.chromium.launch_persistent_context(
-                user_data_dir=str(Path(self.settings.facebook_profile_dir).resolve()),
-                headless=headless,
+            browser = playwright.chromium.launch(headless=headless)
+            context = browser.new_context(viewport={"width": 1440, "height": 1080})
+            return playwright, browser, context
+        except Exception:  # noqa: BLE001
+            if context is not None:
+                context.close()
+            if browser is not None:
+                browser.close()
+            playwright.stop()
+            raise
+
+    def _open_runtime_context(self, *, headless: bool):
+        self._require_playwright()
+        state_path = Path(self.settings.facebook_storage_state_path).resolve()
+        if not state_path.exists():
+            raise RuntimeError(
+                f"Facebook storage state not found at {state_path}. Run `python -m app.cli facebook-login` first."
+            )
+
+        playwright = sync_playwright().start()
+        browser: Browser | None = None
+        context: BrowserContext | None = None
+        try:
+            browser = playwright.chromium.launch(headless=headless)
+            context = browser.new_context(
+                storage_state=str(state_path),
                 viewport={"width": 1440, "height": 1080},
             )
-            return playwright, context
+            return playwright, browser, context
         except Exception:  # noqa: BLE001
+            if context is not None:
+                context.close()
+            if browser is not None:
+                browser.close()
             playwright.stop()
             raise
 
     def bootstrap_login(self) -> dict[str, str]:
-        playwright, context = self._open_context(headless=False)
+        playwright, browser, context = self._open_login_context(headless=False)
         try:
             page = context.new_page()
             page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=90_000)
@@ -91,13 +127,22 @@ class FacebookGroupsAdapter:
             input()
             page.goto("https://www.facebook.com/me", wait_until="domcontentloaded", timeout=90_000)
             self._ensure_authenticated(page, "login bootstrap")
-            return {"status": "ready", "message": "Facebook session saved to persistent profile."}
+
+            state_path = Path(self.settings.facebook_storage_state_path).resolve()
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            context.storage_state(path=str(state_path))
+
+            return {
+                "status": "ready",
+                "message": f"Facebook session saved to storage state ({state_path}).",
+            }
         finally:
             context.close()
+            browser.close()
             playwright.stop()
 
     def discover_groups(self) -> list[FacebookGroupCandidate]:
-        playwright, context = self._open_context(headless=self.settings.facebook_headless)
+        playwright, browser, context = self._open_runtime_context(headless=self.settings.facebook_headless)
         try:
             page = context.new_page()
             page.goto("https://www.facebook.com/me", wait_until="domcontentloaded", timeout=90_000)
@@ -127,56 +172,86 @@ class FacebookGroupsAdapter:
             limited = ordered[: self.settings.facebook_discovery_max_groups]
             if not limited:
                 raise RuntimeError(
-                    "No groups discovered. Ensure Facebook session is logged in and set FACEBOOK_HEADLESS=false in .env.local."
+                    "No groups discovered. Ensure session is valid (run facebook-login), keep FACEBOOK_HEADLESS=false, and retry."
                 )
             return limited
         finally:
             context.close()
+            browser.close()
             playwright.stop()
 
     def fetch_group_posts(self, group: dict[str, str]) -> list[FacebookPost]:
-        playwright, context = self._open_context(headless=self.settings.facebook_headless)
+        groups_data, errors = self.fetch_groups_posts([group])
+        if errors:
+            key = group.get("group_external_id", "unknown")
+            message = errors.get(key) or next(iter(errors.values()))
+            raise RuntimeError(message)
+        return groups_data.get(group.get("group_external_id", "unknown"), [])
+
+    def fetch_groups_posts(self, groups: list[dict[str, str]]) -> tuple[dict[str, list[FacebookPost]], dict[str, str]]:
+        if not groups:
+            return {}, {}
+
+        groups_data: dict[str, list[FacebookPost]] = {}
+        errors: dict[str, str] = {}
+
+        playwright, browser, context = self._open_runtime_context(headless=self.settings.facebook_headless)
         try:
             page = context.new_page()
-            page.goto(group["group_url"], wait_until="domcontentloaded", timeout=90_000)
-            self._ensure_authenticated(page, f"group crawl ({group.get('group_external_id', 'unknown')})")
-            self._ensure_group_accessible(page, group.get("group_url", ""))
+            page.goto("https://www.facebook.com/me", wait_until="domcontentloaded", timeout=90_000)
+            self._ensure_authenticated(page, "group crawl")
 
-            now = datetime.now(UTC)
-            cutoff = now - timedelta(days=max(1, self.settings.facebook_crawl_days))
-            max_posts = max(1, self.settings.facebook_max_posts_per_group)
-            max_scrolls = max(1, self.settings.facebook_max_scrolls_per_group)
-            posts: dict[str, FacebookPost] = {}
-            oldest_seen = now
-
-            for scroll_idx in range(max_scrolls):
-                page.wait_for_timeout(1_100)
-                articles = self._article_locator(page)
+            for group in groups:
+                group_id = group.get("group_external_id", "unknown")
                 try:
-                    count = articles.count()
-                except PlaywrightError:
-                    count = 0
-
-                for idx in range(min(count, max_posts)):
-                    article = articles.nth(idx)
-                    post = self._extract_post_from_article(article=article, group=group, cutoff=cutoff)
-                    if post is None:
-                        continue
-                    if post.posted_at is not None:
-                        oldest_seen = min(oldest_seen, post.posted_at)
-                    posts[post.dedupe_key] = post
-
-                if len(posts) >= max_posts:
-                    break
-                if oldest_seen < cutoff and scroll_idx >= 2:
-                    break
-
-                self._scroll_page(page, 1)
-
-            return list(posts.values())
+                    groups_data[group_id] = self._crawl_group_posts(page=page, group=group)
+                except Exception as exc:  # noqa: BLE001
+                    message = str(exc).strip() or exc.__class__.__name__
+                    errors[group_id] = message
+            return groups_data, errors
         finally:
             context.close()
+            browser.close()
             playwright.stop()
+
+    def _crawl_group_posts(self, *, page, group: dict[str, str]) -> list[FacebookPost]:
+        group_url = group["group_url"]
+        page.goto(group_url, wait_until="domcontentloaded", timeout=90_000)
+        self._ensure_authenticated(page, f"group crawl ({group.get('group_external_id', 'unknown')})")
+        self._ensure_group_accessible(page, group_url)
+
+        now = datetime.now(UTC)
+        cutoff = now - timedelta(days=max(1, self.settings.facebook_crawl_days))
+        max_posts = max(1, self.settings.facebook_max_posts_per_group)
+        max_scrolls = max(1, self.settings.facebook_max_scrolls_per_group)
+        posts: dict[str, FacebookPost] = {}
+        oldest_seen = now
+
+        for scroll_idx in range(max_scrolls):
+            page.wait_for_timeout(1_100)
+            articles = self._article_locator(page)
+            try:
+                count = articles.count()
+            except PlaywrightError:
+                count = 0
+
+            for idx in range(min(count, max_posts)):
+                article = articles.nth(idx)
+                post = self._extract_post_from_article(article=article, group=group, cutoff=cutoff)
+                if post is None:
+                    continue
+                if post.posted_at is not None:
+                    oldest_seen = min(oldest_seen, post.posted_at)
+                posts[post.dedupe_key] = post
+
+            if len(posts) >= max_posts:
+                break
+            if oldest_seen < cutoff and scroll_idx >= 2:
+                break
+
+            self._scroll_page(page, 1)
+
+        return list(posts.values())
 
     def _extract_group_candidates_from_page(
         self,
@@ -198,11 +273,12 @@ class FacebookGroupsAdapter:
             if not self._looks_like_group_url(href):
                 continue
 
-            name = str(item.get("text") or item.get("aria") or "").strip()
+            raw_name = str(item.get("text") or item.get("aria") or "").strip()
+            name = self._clean_group_name(raw_name)
             if len(name) < 3:
                 continue
-            description = f"{name}"
 
+            description = f"{name}"
             score = score_group_relevance(name=name, description=description, keyword=keyword)
             if score < 0.35:
                 continue
@@ -237,7 +313,7 @@ class FacebookGroupsAdapter:
                 continue
             candidate = FacebookGroupCandidate(
                 group_external_id=item["group_external_id"],
-                name=item["name"],
+                name=self._clean_group_name(item["name"]),
                 group_url=item["group_url"],
                 description=item["description"],
                 relevance_score=score,
@@ -248,10 +324,15 @@ class FacebookGroupsAdapter:
         return candidates
 
     def _ensure_authenticated(self, page, action: str) -> None:
+        login_hint = (
+            "Please complete Facebook login in the opened browser, then press ENTER in the terminal."
+            if action == "login bootstrap"
+            else "Run `python -m app.cli facebook-login` first."
+        )
         url = (page.url or "").lower()
         if any(token in url for token in ["/login", "checkpoint", "recover"]):
             raise RuntimeError(
-                f"Facebook authentication required during {action}. Run `python -m app.cli facebook-login` first."
+                f"Facebook authentication required during {action}. {login_hint}"
             )
 
         try:
@@ -260,7 +341,7 @@ class FacebookGroupsAdapter:
             email_inputs = 0
         if email_inputs > 0:
             raise RuntimeError(
-                f"Facebook session is not authenticated during {action}. Run `python -m app.cli facebook-login` first."
+                f"Facebook session is not authenticated during {action}. {login_hint}"
             )
 
     def _ensure_group_accessible(self, page, group_url: str) -> None:
@@ -432,6 +513,16 @@ class FacebookGroupsAdapter:
             return False
         group_id = parse_group_external_id(url)
         return bool(group_id)
+
+    def _clean_group_name(self, value: str) -> str:
+        name = (value or "").strip()
+        lowered = name.lower()
+        for prefix in _GROUP_NAME_NOISE_PREFIXES:
+            if lowered.startswith(prefix):
+                name = name[len(prefix) :].strip()
+                lowered = name.lower()
+        name = re.sub(r"\s+", " ", name)
+        return name.strip()
 
     @staticmethod
     def _scroll_page(page, rounds: int) -> None:

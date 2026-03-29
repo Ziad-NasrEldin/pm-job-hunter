@@ -68,7 +68,8 @@ class FacebookCollector:
                 elif outcome == "updated":
                     total_updated += 1
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"{adapter.source_name}: {exc}")
+            message = str(exc).strip() or exc.__class__.__name__
+            errors.append(f"{adapter.source_name}: {message}")
 
         finished_at = datetime.now(UTC)
         if errors and total_kept > 0:
@@ -166,21 +167,36 @@ class FacebookCollector:
             )
 
         adapter = self._build_adapter()
+        adapter_runtime_error: str | None = None
+
+        try:
+            grouped_posts, grouped_errors = adapter.fetch_groups_posts(groups)
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc).strip() or exc.__class__.__name__
+            grouped_posts = {}
+            grouped_errors = {}
+            adapter_runtime_error = message
+
+        if adapter_runtime_error:
+            errors.append(f"{adapter.source_name}: {adapter_runtime_error}")
 
         for group in groups:
-            try:
-                posts = adapter.fetch_group_posts(group)
-                total_fetched += len(posts)
-                for post in posts:
-                    total_kept += 1
-                    outcome = self.db.upsert_facebook_post(post)
-                    if outcome == "new":
-                        total_new += 1
-                    elif outcome == "updated":
-                        total_updated += 1
-                self.db.touch_facebook_group_crawled(group_external_id=group["group_external_id"])
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{group.get('group_external_id', 'unknown')}: {exc}")
+            group_id = group.get("group_external_id", "unknown")
+            posts = grouped_posts.get(group_id, [])
+            total_fetched += len(posts)
+            for post in posts:
+                total_kept += 1
+                outcome = self.db.upsert_facebook_post(post)
+                if outcome == "new":
+                    total_new += 1
+                elif outcome == "updated":
+                    total_updated += 1
+            if group_id not in grouped_errors:
+                self.db.touch_facebook_group_crawled(group_external_id=group_id)
+
+            error_message = grouped_errors.get(group_id)
+            if error_message:
+                errors.append(f"{group_id}: {error_message}")
 
         removed_assets = self.db.prune_facebook_posts(retention_days=self.settings.facebook_retention_days)
         self._delete_removed_assets(removed_assets)

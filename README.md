@@ -34,6 +34,7 @@ Local-first FastAPI app that aggregates:
 4. Bootstrap Facebook login session once (opens browser):
    - `python -m app.cli facebook-login`
    - Log in with your account, then press Enter in terminal.
+   - This saves `FACEBOOK_STORAGE_STATE_PATH`, used by discovery/collection runs.
 5. Start app:
    - `uvicorn app.main:app --reload`
 6. Open dashboard:
