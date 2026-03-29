@@ -121,12 +121,17 @@ class FacebookGroupsAdapter:
         try:
             page = context.new_page()
             page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=90_000)
-            print(
-                "A browser window has opened. Log in to Facebook, then press ENTER in this terminal to save the session."
-            )
-            input()
-            page.goto("https://www.facebook.com/me", wait_until="domcontentloaded", timeout=90_000)
-            self._ensure_authenticated(page, "login bootstrap")
+            timeout_seconds = max(30, self.settings.facebook_login_timeout_seconds)
+            deadline = datetime.now(UTC) + timedelta(seconds=timeout_seconds)
+            while datetime.now(UTC) < deadline:
+                if self._is_authenticated(page):
+                    break
+                page.wait_for_timeout(1_500)
+            else:
+                raise RuntimeError(
+                    f"Facebook login timed out after {timeout_seconds} seconds. "
+                    "Open login again and complete authentication in the browser window."
+                )
 
             state_path = Path(self.settings.facebook_storage_state_path).resolve()
             state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,7 +139,7 @@ class FacebookGroupsAdapter:
 
             return {
                 "status": "ready",
-                "message": f"Facebook session saved to storage state ({state_path}).",
+                "message": f"Facebook session saved ({state_path}).",
             }
         finally:
             context.close()
@@ -324,25 +329,27 @@ class FacebookGroupsAdapter:
         return candidates
 
     def _ensure_authenticated(self, page, action: str) -> None:
-        login_hint = (
-            "Please complete Facebook login in the opened browser, then press ENTER in the terminal."
-            if action == "login bootstrap"
-            else "Run `python -m app.cli facebook-login` first."
-        )
-        url = (page.url or "").lower()
-        if any(token in url for token in ["/login", "checkpoint", "recover"]):
-            raise RuntimeError(
-                f"Facebook authentication required during {action}. {login_hint}"
+        if not self._is_authenticated(page):
+            login_hint = (
+                "Use the dashboard quick action 'Facebook Login' and complete login in the opened browser."
+                if action == "login bootstrap"
+                else "Use dashboard quick action 'Facebook Login' or run `python -m app.cli facebook-login`."
             )
-
-        try:
-            email_inputs = page.locator("input[name='email']").count()
-        except PlaywrightError:
-            email_inputs = 0
-        if email_inputs > 0:
             raise RuntimeError(
                 f"Facebook session is not authenticated during {action}. {login_hint}"
             )
+
+    def _is_authenticated(self, page) -> bool:
+        url = (page.url or "").lower()
+        if any(token in url for token in ["/login", "checkpoint", "recover"]):
+            return False
+
+        try:
+            if page.locator("input[name='email']").count() > 0:
+                return False
+        except PlaywrightError:
+            pass
+        return True
 
     def _ensure_group_accessible(self, page, group_url: str) -> None:
         try:

@@ -7,9 +7,8 @@ PM Job Hunter - First Run Notes
    %LOCALAPPDATA%\PMJobHunter\data
 
 Facebook setup:
-1) Open the app and go to "Facebook Scraper" tab.
-2) Run "Group Discovery", approve groups, then use "Run Facebook Scraper".
-3) If Facebook session is missing, run:
-   python -m app.cli facebook-login
+1) Open the app and use "Facebook Login" in Quick Actions.
+2) Complete login in the browser window until status says session is ready.
+3) Run "Group Discovery", approve groups, then use "Run Facebook Scraper".
 
 Note: this release is unsigned, so Windows SmartScreen may show a warning.

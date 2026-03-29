@@ -23,6 +23,7 @@ def test_global_facebook_quick_actions_visible_on_pm_tab(tmp_path):
         resp = client.get("/?tab=pm")
         assert resp.status_code == 200
         assert "Quick Actions" in resp.text
+        assert "Facebook Login" in resp.text
         assert "Run Facebook Scraper" in resp.text
         assert "Run Group Discovery" in resp.text
 
@@ -34,5 +35,6 @@ def test_global_facebook_quick_actions_visible_on_facebook_tab(tmp_path):
         resp = client.get("/?tab=facebook")
         assert resp.status_code == 200
         assert "Quick Actions" in resp.text
+        assert "Facebook Login" in resp.text
         assert "Run Facebook Scraper" in resp.text
         assert "Run Group Discovery" in resp.text

@@ -25,6 +25,7 @@ Local-first FastAPI app that aggregates:
   - screenshot preview/open
   - CSV export for Facebook leads
   - global quick actions bar with `Run Facebook Scraper` and `Run Group Discovery`
+  - one-click `Facebook Login` from dashboard (no terminal prompt)
 
 ## Quick Start
 1. Create virtual environment and install dependencies:
@@ -35,10 +36,10 @@ Local-first FastAPI app that aggregates:
    - `playwright install chromium`
 3. Copy `.env.local.example` to `.env.local` and set values.
    - Keep `FACEBOOK_HEADLESS=false` for more reliable discovery/crawling.
-4. Bootstrap Facebook login session once (opens browser):
-   - `python -m app.cli facebook-login`
-   - Log in with your account, then press Enter in terminal.
-   - This saves `FACEBOOK_STORAGE_STATE_PATH`, used by discovery/collection runs.
+4. Bootstrap Facebook login session once:
+   - Recommended: use dashboard quick action `Facebook Login` (opens browser and waits for login automatically).
+   - CLI fallback: `python -m app.cli facebook-login`
+   - Session is saved to `FACEBOOK_STORAGE_STATE_PATH`, used by discovery/collection runs.
 5. Start app:
    - `uvicorn app.main:app --reload`
 6. Open dashboard:
@@ -56,6 +57,7 @@ Local-first FastAPI app that aggregates:
 Notes:
 - In installed/frozen mode, runtime data uses `%LOCALAPPDATA%\PMJobHunter\...`.
 - If `%LOCALAPPDATA%\PMJobHunter\.env.local` is missing, it is auto-created from `.env.local.example`.
+- EXE build is console-less (`--noconsole`) so no terminal window appears for end users.
 
 ## Windows Installer (Shareable)
 1. Build installer locally:

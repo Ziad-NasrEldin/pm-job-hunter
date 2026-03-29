@@ -15,6 +15,7 @@ Write-Host "Building PMJobHunter.exe ..."
   --noconfirm `
   --clean `
   --onefile `
+  --noconsole `
   --name PMJobHunter `
   --collect-all playwright `
   --collect-submodules uvicorn `

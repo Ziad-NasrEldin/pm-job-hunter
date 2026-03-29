@@ -58,6 +58,7 @@
     <div class="panel">
         <h2>Quick Actions</h2>
         <div class="controls">
+            <button id="quickFbLoginButton" class="secondary" type="button">Facebook Login</button>
             <button id="quickFbRunButton" type="button">Run Facebook Scraper</button>
             <button id="quickFbDiscoverButton" class="secondary" type="button">Run Group Discovery</button>
             <span id="quickActionStatus" class="muted">Checking Facebook status...</span>
@@ -490,6 +491,18 @@
                 reloadPreservingTab();
             } catch (err) {
                 actionStatus.textContent = `Facebook scraper failed: ${err.message}`;
+            }
+        });
+
+        document.getElementById("quickFbLoginButton").addEventListener("click", async () => {
+            const actionStatus = document.getElementById("quickActionStatus");
+            actionStatus.textContent = "Opening Facebook login. Complete login in the browser window...";
+            try {
+                const data = await postJson("/facebook/login/bootstrap");
+                actionStatus.textContent = data.message || "Facebook login completed.";
+                await refreshFacebookStatus();
+            } catch (err) {
+                actionStatus.textContent = `Facebook login failed: ${err.message}`;
             }
         });
 

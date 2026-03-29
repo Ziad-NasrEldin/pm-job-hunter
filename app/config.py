@@ -65,6 +65,7 @@ def _bootstrap_env_file(env_path: Path) -> None:
 
     env_path.parent.mkdir(parents=True, exist_ok=True)
     template_candidates = [
+        env_path.parent / ".env.local.example",
         Path(sys.executable).resolve().parent / ".env.local.example",
         Path(__file__).resolve().parent.parent / ".env.local.example",
     ]
@@ -192,6 +193,7 @@ class Settings:
     facebook_discovery_scrolls: int = 5
     facebook_max_scrolls_per_group: int = 18
     facebook_max_posts_per_group: int = 240
+    facebook_login_timeout_seconds: int = 600
     facebook_screenshots_dir: str = "./data/screenshots/facebook"
     facebook_raw_dir: str = "./data/raw/facebook"
     playwright_browsers_path: str | None = None
@@ -324,6 +326,7 @@ class Settings:
             facebook_discovery_scrolls=_get_int("FACEBOOK_DISCOVERY_SCROLLS", 5),
             facebook_max_scrolls_per_group=_get_int("FACEBOOK_MAX_SCROLLS_PER_GROUP", 18),
             facebook_max_posts_per_group=_get_int("FACEBOOK_MAX_POSTS_PER_GROUP", 240),
+            facebook_login_timeout_seconds=_get_int("FACEBOOK_LOGIN_TIMEOUT_SECONDS", 600),
             facebook_screenshots_dir=facebook_screenshots_dir_value,
             facebook_raw_dir=facebook_raw_dir_value,
             playwright_browsers_path=playwright_browsers_path or None,

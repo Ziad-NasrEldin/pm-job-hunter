@@ -43,3 +43,12 @@ def test_non_frozen_defaults_unchanged(monkeypatch, tmp_path):
     settings = Settings.from_env()
     assert settings.db_path == "./data/jobs.db"
     assert settings.playwright_browsers_path is None
+
+
+def test_login_timeout_from_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    monkeypatch.setenv("APP_ENV_FILE", str(tmp_path / "does-not-exist.env"))
+    monkeypatch.setenv("FACEBOOK_LOGIN_TIMEOUT_SECONDS", "321")
+
+    settings = Settings.from_env()
+    assert settings.facebook_login_timeout_seconds == 321
