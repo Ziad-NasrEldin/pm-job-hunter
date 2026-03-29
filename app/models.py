@@ -92,3 +92,46 @@ class RunSummary:
     total_updated: int
     errors: list[str]
 
+
+@dataclass(slots=True)
+class FacebookGroupCandidate:
+    group_external_id: str
+    name: str
+    group_url: str
+    description: str
+    relevance_score: float
+    discovered_keyword: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class FacebookPost:
+    group_external_id: str
+    group_name: str
+    post_external_id: str
+    post_url: str
+    post_text: str
+    post_excerpt: str
+    posted_at: datetime | None
+    category_tag: str
+    is_remote: bool
+    phone_numbers: list[str]
+    whatsapp_links: list[str]
+    screenshot_path: str | None
+    raw_snapshot_path: str | None
+    dedupe_key: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class FacebookRunSummary:
+    run_id: int
+    mode: str
+    started_at: datetime
+    finished_at: datetime | None
+    status: str
+    total_fetched: int
+    total_kept: int
+    total_new: int
+    total_updated: int
+    errors: list[str]

@@ -1,36 +1,75 @@
-# PM Job Hunter (V1)
+# PM Job Hunter (V2)
 
-Local-first FastAPI app that aggregates early-career Product jobs for MENA + Remote.
+Local-first FastAPI app that aggregates:
+- Product jobs from LinkedIn/Greenhouse/Lever.
+- Remote Facebook group jobs (Arabic + English) with phone extraction and post screenshots.
 
 ## Features
-- Public source adapters: LinkedIn public Jobs pages, Greenhouse, Lever.
-- Role priority: Product Owner > Product Manager > APM.
-- Loose early-career ranking with senior-role exclusion.
-- SQLite persistence with deduplication.
-- Daily collection (09:00 Africa/Cairo) and digest email (09:15 Africa/Cairo).
-- Minimal dashboard with filters, manual run, and CSV export.
+- Existing PM pipeline: role ranking, early-career scoring, dedupe, CSV export.
+- Facebook discovery pipeline:
+  - semi-automatic Egypt-relevant group discovery
+  - pending group approval before crawling
+  - crawl of approved groups every 2 hours (configurable)
+- Facebook remote-job extraction:
+  - strict remote/work-from-home filtering in Arabic + English
+  - phone extraction (Arabic-Indic digits supported)
+  - WhatsApp link extraction
+  - category tagging (cold calling, sales, support, data entry, other)
+  - post-card screenshot + raw HTML snapshot storage
+- Dashboard support for:
+  - approving/disabling groups
+  - filtering Facebook leads
+  - screenshot preview/open
+  - CSV export for Facebook leads
 
 ## Quick Start
-1. Create a virtual environment and install dependencies:
+1. Create virtual environment and install dependencies:
    - `python -m venv .venv`
    - `.venv\Scripts\activate`
    - `pip install -r requirements.txt`
-2. Copy `.env.example` to `.env` and fill:
-   - `RESEND_API_KEY`
-   - `DIGEST_FROM_EMAIL`
-   - `DIGEST_TO_EMAIL`
-3. Run the app:
+2. Install Playwright browser runtime once:
+   - `playwright install chromium`
+3. Copy `.env.example` to `.env.local` and set values.
+4. Bootstrap Facebook login session once (opens browser):
+   - `python -m app.cli facebook-login`
+   - Log in with your account, then press Enter in terminal.
+5. Start app:
    - `uvicorn app.main:app --reload`
-4. Open dashboard:
+6. Open dashboard:
    - `http://127.0.0.1:8000/`
 
+## CLI Commands
+- `python -m app.cli collect`
+- `python -m app.cli digest`
+- `python -m app.cli facebook-login`
+- `python -m app.cli facebook-discover`
+- `python -m app.cli facebook-collect`
+
 ## API
+### PM Jobs
 - `POST /runs/manual`
 - `GET /runs/latest`
 - `GET /jobs`
 - `GET /jobs/export.csv`
 
+### Facebook Jobs
+- `POST /facebook/login/bootstrap`
+- `POST /facebook/discovery/run`
+- `GET /facebook/groups/candidates`
+- `POST /facebook/groups/{group_id}/approve`
+- `POST /facebook/groups/{group_id}/disable`
+- `POST /facebook/runs/manual`
+- `GET /facebook/runs/latest`
+- `GET /facebook/posts`
+- `GET /facebook/posts/export.csv`
+
+## Storage Layout
+- SQLite DB: `DB_PATH` (default `./data/jobs.db`)
+- Screenshots: `./data/screenshots/facebook`
+- Raw post snapshots: `./data/raw/facebook`
+- Playwright profile/session: `./data/facebook_profile`
+
 ## Notes
-- LinkedIn adapter only uses public pages and does not require login.
-- Source structures may change over time; parser failures are isolated per source.
-- For stronger coverage, configure `GREENHOUSE_BOARDS` and `LEVER_COMPANIES`.
+- Facebook scraping reliability depends on current Facebook markup and account visibility permissions.
+- Private/inaccessible groups are skipped.
+- Existing PM job pipeline remains intact and separate from Facebook tables.

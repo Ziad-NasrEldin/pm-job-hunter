@@ -5,16 +5,21 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.collector import JobCollector
 from app.config import Settings
 from app.digest import DigestService
+from app.facebook_collector import FacebookCollector
 
 logger = logging.getLogger(__name__)
 
 
 def build_scheduler(
-    settings: Settings, collector: JobCollector, digest_service: DigestService
+    settings: Settings,
+    collector: JobCollector,
+    digest_service: DigestService,
+    facebook_collector: FacebookCollector | None = None,
 ) -> BackgroundScheduler:
     scheduler = BackgroundScheduler(timezone=ZoneInfo(settings.app_timezone))
 
@@ -48,5 +53,40 @@ def build_scheduler(
         max_instances=1,
         coalesce=True,
     )
-    return scheduler
 
+    if settings.facebook_enabled and facebook_collector is not None:
+        def run_facebook_collection_job() -> None:
+            try:
+                result = facebook_collector.run_once()
+                logger.info("Facebook collection completed: run_id=%s status=%s", result.run_id, result.status)
+            except Exception:  # noqa: BLE001
+                logger.exception("Facebook collection job failed")
+
+        def run_facebook_discovery_job() -> None:
+            try:
+                result = facebook_collector.run_discovery()
+                logger.info("Facebook discovery completed: run_id=%s status=%s", result.run_id, result.status)
+            except Exception:  # noqa: BLE001
+                logger.exception("Facebook discovery job failed")
+
+        scheduler.add_job(
+            run_facebook_collection_job,
+            trigger=IntervalTrigger(hours=max(1, settings.facebook_collection_interval_hours)),
+            id="facebook_collection",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            run_facebook_discovery_job,
+            trigger=CronTrigger(
+                hour=max(0, min(23, settings.facebook_discovery_hour)),
+                minute=max(0, min(59, settings.facebook_discovery_minute)),
+            ),
+            id="facebook_discovery",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+
+    return scheduler

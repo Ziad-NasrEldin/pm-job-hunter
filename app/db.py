@@ -8,7 +8,14 @@ from hashlib import sha1
 from threading import Lock
 from typing import Any
 
-from app.models import DigestItem, RunSummary, ScoredJob
+from app.models import (
+    DigestItem,
+    FacebookGroupCandidate,
+    FacebookPost,
+    FacebookRunSummary,
+    RunSummary,
+    ScoredJob,
+)
 
 
 def _utcnow() -> datetime:
@@ -99,8 +106,73 @@ class Database:
                     total_updated INTEGER NOT NULL DEFAULT 0,
                     errors_json TEXT NOT NULL DEFAULT '[]'
                 );
+                CREATE TABLE IF NOT EXISTS facebook_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mode TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    status TEXT NOT NULL,
+                    total_fetched INTEGER NOT NULL DEFAULT 0,
+                    total_kept INTEGER NOT NULL DEFAULT 0,
+                    total_new INTEGER NOT NULL DEFAULT 0,
+                    total_updated INTEGER NOT NULL DEFAULT 0,
+                    errors_json TEXT NOT NULL DEFAULT '[]'
+                );
+                CREATE TABLE IF NOT EXISTS facebook_group_candidates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_external_id TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    group_url TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    relevance_score REAL NOT NULL DEFAULT 0.0,
+                    discovered_keyword TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS facebook_groups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_external_id TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    group_url TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    approved_at TEXT NOT NULL,
+                    last_crawled_at TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS facebook_posts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_external_id TEXT NOT NULL,
+                    group_name TEXT NOT NULL,
+                    post_external_id TEXT NOT NULL,
+                    post_url TEXT NOT NULL,
+                    post_text TEXT NOT NULL,
+                    post_excerpt TEXT NOT NULL,
+                    posted_at TEXT,
+                    category_tag TEXT NOT NULL,
+                    is_remote INTEGER NOT NULL DEFAULT 1,
+                    phone_numbers_json TEXT NOT NULL DEFAULT '[]',
+                    whatsapp_links_json TEXT NOT NULL DEFAULT '[]',
+                    screenshot_path TEXT,
+                    raw_snapshot_path TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    dedupe_key TEXT NOT NULL UNIQUE,
+                    first_seen_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    content_updated_at TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 1
+                );
                 CREATE INDEX IF NOT EXISTS idx_jobs_role ON jobs(role_priority DESC, early_career_score DESC);
                 CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(content_updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_facebook_candidates_status ON facebook_group_candidates(status, relevance_score DESC);
+                CREATE INDEX IF NOT EXISTS idx_facebook_groups_active ON facebook_groups(is_active, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_facebook_posts_updated ON facebook_posts(content_updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_facebook_posts_group ON facebook_posts(group_external_id, content_updated_at DESC);
                 """
             )
             conn.commit()
@@ -132,6 +204,50 @@ class Database:
             conn.execute(
                 """
                 UPDATE runs
+                SET finished_at = ?, status = ?, total_fetched = ?, total_kept = ?,
+                    total_new = ?, total_updated = ?, errors_json = ?
+                WHERE id = ?
+                """,
+                (
+                    _iso(finished_at),
+                    status,
+                    total_fetched,
+                    total_kept,
+                    total_new,
+                    total_updated,
+                    json.dumps(errors),
+                    run_id,
+                ),
+            )
+            conn.commit()
+
+    def create_facebook_run(self, started_at: datetime, mode: str) -> int:
+        with self._lock, self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO facebook_runs(mode, started_at, status)
+                VALUES(?, ?, ?)
+                """,
+                (mode, _iso(started_at), "running"),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+
+    def finalize_facebook_run(
+        self,
+        run_id: int,
+        status: str,
+        total_fetched: int,
+        total_kept: int,
+        total_new: int,
+        total_updated: int,
+        errors: list[str],
+        finished_at: datetime,
+    ) -> None:
+        with self._lock, self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE facebook_runs
                 SET finished_at = ?, status = ?, total_fetched = ?, total_kept = ?,
                     total_new = ?, total_updated = ?, errors_json = ?
                 WHERE id = ?
@@ -292,6 +408,431 @@ class Database:
             total_updated=row["total_updated"],
             errors=json.loads(row["errors_json"] or "[]"),
         )
+
+    def get_latest_facebook_run(self, mode: str | None = None) -> FacebookRunSummary | None:
+        query = "SELECT * FROM facebook_runs"
+        values: list[Any] = []
+        if mode:
+            query += " WHERE mode = ?"
+            values.append(mode)
+        query += " ORDER BY id DESC LIMIT 1"
+
+        with self.connect() as conn:
+            row = conn.execute(query, values).fetchone()
+        if row is None:
+            return None
+        return FacebookRunSummary(
+            run_id=row["id"],
+            mode=row["mode"],
+            started_at=_parse(row["started_at"]) or _utcnow(),
+            finished_at=_parse(row["finished_at"]),
+            status=row["status"],
+            total_fetched=row["total_fetched"],
+            total_kept=row["total_kept"],
+            total_new=row["total_new"],
+            total_updated=row["total_updated"],
+            errors=json.loads(row["errors_json"] or "[]"),
+        )
+
+    def upsert_facebook_group_candidate(
+        self, candidate: FacebookGroupCandidate, now: datetime | None = None
+    ) -> str:
+        now = now or _utcnow()
+        now_iso = _iso(now)
+        metadata_json = json.dumps(candidate.metadata or {})
+
+        with self._lock, self.connect() as conn:
+            existing = conn.execute(
+                "SELECT id, status, relevance_score, name, group_url, description, discovered_keyword FROM facebook_group_candidates WHERE group_external_id = ?",
+                (candidate.group_external_id,),
+            ).fetchone()
+
+            if existing is None:
+                conn.execute(
+                    """
+                    INSERT INTO facebook_group_candidates(
+                        group_external_id, name, group_url, description, relevance_score,
+                        discovered_keyword, status, metadata_json, created_at, updated_at, last_seen_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                    """,
+                    (
+                        candidate.group_external_id,
+                        candidate.name,
+                        candidate.group_url,
+                        candidate.description,
+                        candidate.relevance_score,
+                        candidate.discovered_keyword,
+                        metadata_json,
+                        now_iso,
+                        now_iso,
+                        now_iso,
+                    ),
+                )
+                conn.commit()
+                return "new"
+
+            changed = (
+                existing["name"] != candidate.name
+                or existing["group_url"] != candidate.group_url
+                or existing["description"] != candidate.description
+                or existing["discovered_keyword"] != candidate.discovered_keyword
+                or float(existing["relevance_score"]) != float(candidate.relevance_score)
+            )
+
+            conn.execute(
+                """
+                UPDATE facebook_group_candidates
+                SET name = ?, group_url = ?, description = ?, relevance_score = ?, discovered_keyword = ?,
+                    metadata_json = ?, updated_at = ?, last_seen_at = ?
+                WHERE group_external_id = ?
+                """,
+                (
+                    candidate.name,
+                    candidate.group_url,
+                    candidate.description,
+                    candidate.relevance_score,
+                    candidate.discovered_keyword,
+                    metadata_json,
+                    now_iso,
+                    now_iso,
+                    candidate.group_external_id,
+                ),
+            )
+            conn.commit()
+            return "updated" if changed else "unchanged"
+
+    def list_facebook_group_candidates(
+        self, status: str | None = None, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        where: list[str] = []
+        values: list[Any] = []
+        if status:
+            where.append("status = ?")
+            values.append(status)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        values.append(limit)
+        sql = f"""
+        SELECT *
+        FROM facebook_group_candidates
+        {clause}
+        ORDER BY relevance_score DESC, updated_at DESC
+        LIMIT ?
+        """
+        with self.connect() as conn:
+            rows = conn.execute(sql, values).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            obj = dict(row)
+            obj["metadata"] = json.loads(obj.pop("metadata_json", "{}") or "{}")
+            items.append(obj)
+        return items
+
+    def approve_facebook_group(self, group_external_id: str, now: datetime | None = None) -> dict[str, Any] | None:
+        now = now or _utcnow()
+        now_iso = _iso(now)
+
+        with self._lock, self.connect() as conn:
+            candidate = conn.execute(
+                "SELECT * FROM facebook_group_candidates WHERE group_external_id = ?",
+                (group_external_id,),
+            ).fetchone()
+            if candidate is None:
+                return None
+
+            conn.execute(
+                """
+                UPDATE facebook_group_candidates
+                SET status = 'approved', updated_at = ?, last_seen_at = ?
+                WHERE group_external_id = ?
+                """,
+                (now_iso, now_iso, group_external_id),
+            )
+
+            existing_group = conn.execute(
+                "SELECT id FROM facebook_groups WHERE group_external_id = ?",
+                (group_external_id,),
+            ).fetchone()
+            metadata_json = candidate["metadata_json"] or "{}"
+            if existing_group is None:
+                conn.execute(
+                    """
+                    INSERT INTO facebook_groups(
+                        group_external_id, name, group_url, is_active, approved_at,
+                        metadata_json, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+                    """,
+                    (
+                        candidate["group_external_id"],
+                        candidate["name"],
+                        candidate["group_url"],
+                        now_iso,
+                        metadata_json,
+                        now_iso,
+                        now_iso,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE facebook_groups
+                    SET name = ?, group_url = ?, is_active = 1, metadata_json = ?, updated_at = ?
+                    WHERE group_external_id = ?
+                    """,
+                    (
+                        candidate["name"],
+                        candidate["group_url"],
+                        metadata_json,
+                        now_iso,
+                        group_external_id,
+                    ),
+                )
+
+            conn.commit()
+            approved = conn.execute(
+                "SELECT * FROM facebook_groups WHERE group_external_id = ?",
+                (group_external_id,),
+            ).fetchone()
+
+        if approved is None:
+            return None
+        result = dict(approved)
+        result["metadata"] = json.loads(result.pop("metadata_json", "{}") or "{}")
+        return result
+
+    def disable_facebook_group(self, group_external_id: str, now: datetime | None = None) -> bool:
+        now = now or _utcnow()
+        now_iso = _iso(now)
+
+        with self._lock, self.connect() as conn:
+            updated_group = conn.execute(
+                """
+                UPDATE facebook_groups
+                SET is_active = 0, updated_at = ?
+                WHERE group_external_id = ?
+                """,
+                (now_iso, group_external_id),
+            ).rowcount
+            conn.execute(
+                """
+                UPDATE facebook_group_candidates
+                SET status = 'disabled', updated_at = ?
+                WHERE group_external_id = ?
+                """,
+                (now_iso, group_external_id),
+            )
+            conn.commit()
+            return updated_group > 0
+
+    def list_facebook_groups(self, active_only: bool = True, limit: int = 500) -> list[dict[str, Any]]:
+        where = "WHERE is_active = 1" if active_only else ""
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM facebook_groups
+                {where}
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        groups: list[dict[str, Any]] = []
+        for row in rows:
+            obj = dict(row)
+            obj["metadata"] = json.loads(obj.pop("metadata_json", "{}") or "{}")
+            groups.append(obj)
+        return groups
+
+    def touch_facebook_group_crawled(self, group_external_id: str, when: datetime | None = None) -> None:
+        when = when or _utcnow()
+        when_iso = _iso(when)
+        with self._lock, self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE facebook_groups
+                SET last_crawled_at = ?, updated_at = ?
+                WHERE group_external_id = ?
+                """,
+                (when_iso, when_iso, group_external_id),
+            )
+            conn.commit()
+
+    def _facebook_post_content_hash(self, post: FacebookPost) -> str:
+        blob = "|".join(
+            [
+                post.group_external_id,
+                post.post_external_id,
+                post.post_url,
+                post.post_text,
+                post.post_excerpt,
+                post.category_tag,
+                str(post.is_remote),
+                ",".join(post.phone_numbers),
+                ",".join(post.whatsapp_links),
+                post.screenshot_path or "",
+                post.raw_snapshot_path or "",
+                str(post.posted_at),
+            ]
+        )
+        return sha1(blob.encode("utf-8")).hexdigest()
+
+    def upsert_facebook_post(self, post: FacebookPost, now: datetime | None = None) -> str:
+        now = now or _utcnow()
+        now_iso = _iso(now)
+        posted_iso = _iso(post.posted_at)
+        metadata_json = json.dumps(post.metadata or {})
+        phones_json = json.dumps(post.phone_numbers or [])
+        whatsapp_json = json.dumps(post.whatsapp_links or [])
+        content_hash = self._facebook_post_content_hash(post)
+
+        with self._lock, self.connect() as conn:
+            existing = conn.execute(
+                "SELECT id, content_hash FROM facebook_posts WHERE dedupe_key = ?",
+                (post.dedupe_key,),
+            ).fetchone()
+
+            if existing is None:
+                conn.execute(
+                    """
+                    INSERT INTO facebook_posts(
+                        group_external_id, group_name, post_external_id, post_url,
+                        post_text, post_excerpt, posted_at, category_tag, is_remote,
+                        phone_numbers_json, whatsapp_links_json, screenshot_path, raw_snapshot_path,
+                        metadata_json, dedupe_key, first_seen_at, last_seen_at, content_updated_at,
+                        content_hash, is_active
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    """,
+                    (
+                        post.group_external_id,
+                        post.group_name,
+                        post.post_external_id,
+                        post.post_url,
+                        post.post_text,
+                        post.post_excerpt,
+                        posted_iso,
+                        post.category_tag,
+                        int(post.is_remote),
+                        phones_json,
+                        whatsapp_json,
+                        post.screenshot_path,
+                        post.raw_snapshot_path,
+                        metadata_json,
+                        post.dedupe_key,
+                        now_iso,
+                        now_iso,
+                        now_iso,
+                        content_hash,
+                    ),
+                )
+                conn.commit()
+                return "new"
+
+            if existing["content_hash"] != content_hash:
+                conn.execute(
+                    """
+                    UPDATE facebook_posts
+                    SET group_name = ?, post_url = ?, post_text = ?, post_excerpt = ?,
+                        posted_at = ?, category_tag = ?, is_remote = ?, phone_numbers_json = ?,
+                        whatsapp_links_json = ?, screenshot_path = ?, raw_snapshot_path = ?,
+                        metadata_json = ?, last_seen_at = ?, content_updated_at = ?, content_hash = ?,
+                        is_active = 1
+                    WHERE dedupe_key = ?
+                    """,
+                    (
+                        post.group_name,
+                        post.post_url,
+                        post.post_text,
+                        post.post_excerpt,
+                        posted_iso,
+                        post.category_tag,
+                        int(post.is_remote),
+                        phones_json,
+                        whatsapp_json,
+                        post.screenshot_path,
+                        post.raw_snapshot_path,
+                        metadata_json,
+                        now_iso,
+                        now_iso,
+                        content_hash,
+                        post.dedupe_key,
+                    ),
+                )
+                conn.commit()
+                return "updated"
+
+            conn.execute(
+                "UPDATE facebook_posts SET last_seen_at = ?, is_active = 1 WHERE dedupe_key = ?",
+                (now_iso, post.dedupe_key),
+            )
+            conn.commit()
+            return "unchanged"
+
+    def list_facebook_posts(
+        self,
+        group: str | None = None,
+        category: str | None = None,
+        has_phone: bool | None = None,
+        new_since_hours: int | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        where: list[str] = []
+        values: list[Any] = []
+        if group:
+            where.append("group_external_id = ?")
+            values.append(group)
+        if category:
+            where.append("category_tag = ?")
+            values.append(category)
+        if has_phone is not None:
+            if has_phone:
+                where.append("phone_numbers_json != '[]'")
+            else:
+                where.append("phone_numbers_json = '[]'")
+        if new_since_hours is not None:
+            cutoff = _iso(_utcnow() - timedelta(hours=new_since_hours))
+            where.append("content_updated_at >= ?")
+            values.append(cutoff)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        values.append(limit)
+
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM facebook_posts
+                {clause}
+                ORDER BY content_updated_at DESC
+                LIMIT ?
+                """,
+                values,
+            ).fetchall()
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            obj = dict(row)
+            obj["phone_numbers"] = json.loads(obj.pop("phone_numbers_json", "[]") or "[]")
+            obj["whatsapp_links"] = json.loads(obj.pop("whatsapp_links_json", "[]") or "[]")
+            obj["metadata"] = json.loads(obj.pop("metadata_json", "{}") or "{}")
+            items.append(obj)
+        return items
+
+    def prune_facebook_posts(self, retention_days: int) -> list[dict[str, str]]:
+        cutoff = _iso(_utcnow() - timedelta(days=retention_days))
+        with self._lock, self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT screenshot_path, raw_snapshot_path
+                FROM facebook_posts
+                WHERE last_seen_at < ?
+                """,
+                (cutoff,),
+            ).fetchall()
+            conn.execute("DELETE FROM facebook_posts WHERE last_seen_at < ?", (cutoff,))
+            conn.commit()
+        return [dict(row) for row in rows]
 
     def list_jobs(
         self,

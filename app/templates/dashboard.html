@@ -5,97 +5,98 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PM Job Hunter Dashboard</title>
     <style>
-        body { font-family: "Segoe UI", Tahoma, sans-serif; margin: 24px; background: #f8fafc; color: #0f172a; }
+        :root {
+            --bg: #f8fafc;
+            --panel: #ffffff;
+            --border: #e2e8f0;
+            --text: #0f172a;
+            --muted: #475569;
+            --brand: #0ea5e9;
+            --brand-dark: #0369a1;
+            --danger: #dc2626;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: "Segoe UI", Tahoma, sans-serif; margin: 24px; background: var(--bg); color: var(--text); }
         h1 { margin-bottom: 8px; }
-        .panel { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+        h2 { margin: 0 0 8px; }
+        .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+        .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
         form.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-        input, select, button { padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
-        button { cursor: pointer; background: #0ea5e9; color: white; border: none; }
+        input, select, button { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
+        button { cursor: pointer; background: var(--brand); color: #fff; border: none; }
         button.secondary { background: #334155; }
-        .button-link { padding: 7px 10px; border-radius: 6px; background: #334155; color: white; text-decoration: none; }
-        .label { font-size: 12px; color: #475569; font-weight: 600; }
-        .field { display: flex; flex-direction: column; gap: 4px; min-width: 170px; }
-        table { width: 100%; border-collapse: collapse; background: white; }
-        th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: left; font-size: 13px; }
+        button.danger { background: var(--danger); }
+        button.small { padding: 5px 8px; font-size: 12px; }
+        table { width: 100%; border-collapse: collapse; background: #fff; }
+        th, td { border: 1px solid var(--border); padding: 8px; text-align: left; font-size: 13px; vertical-align: top; }
         th { background: #f1f5f9; }
-        .muted { color: #475569; font-size: 13px; }
+        .muted { color: var(--muted); font-size: 13px; }
         .status { font-weight: 600; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        .tag { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: 12px; background: #e2e8f0; color: #0f172a; }
+        .phones span { display: inline-block; margin-right: 6px; margin-bottom: 4px; padding: 2px 6px; background: #e0f2fe; border-radius: 999px; }
+        .thumb { max-width: 150px; max-height: 120px; border: 1px solid var(--border); border-radius: 6px; display: block; margin-bottom: 6px; }
+        @media (max-width: 980px) {
+            .grid-2 { grid-template-columns: 1fr; }
+            table { display: block; overflow-x: auto; }
+        }
     </style>
 </head>
 <body>
     <h1>PM Job Hunter</h1>
-    <p class="muted">Timezone: {{ timezone }} | Product Owner > Product Manager > APM</p>
-    <p class="muted">Location priority: Alexandria, then Cairo, then Remote (outside Egypt).</p>
+    <p class="muted">Timezone: {{ timezone }} | Includes LinkedIn/Greenhouse/Lever + Facebook remote jobs (Arabic + English)</p>
 
     <div class="panel">
-        <div style="display:flex; gap:8px; margin-bottom:8px;">
-            <button id="runNowButton" type="button">Run Collection Now</button>
-            <button id="digestButton" class="secondary" type="button">Send Digest Now</button>
-            <a href="/jobs/export.csv" style="margin-left:auto;">Export CSV</a>
+        <div class="controls" style="margin-bottom:8px;">
+            <button id="runNowButton" type="button">Run PM Collection</button>
+            <button id="digestButton" class="secondary" type="button">Send PM Digest</button>
+            <a href="/jobs/export.csv" style="margin-left:auto;">Export PM CSV</a>
         </div>
         <div class="muted" id="runStatus">
             {% if latest_run %}
-            Last run #{{ latest_run.run_id }}:
+            PM run #{{ latest_run.run_id }}:
             <span class="status">{{ latest_run.status }}</span>
             (new={{ latest_run.total_new }}, updated={{ latest_run.total_updated }}, kept={{ latest_run.total_kept }})
             {% else %}
-            No runs yet.
+            No PM runs yet.
             {% endif %}
         </div>
     </div>
 
     <div class="panel">
+        <h2>PM Job Filters</h2>
         <form method="get" class="inline">
-            <div class="field">
-                <span class="label">Role</span>
-                <select name="role">
-                    {% for value, label in role_options %}
-                    <option value="{{ value }}" {% if (filters.role or '') == value %}selected{% endif %}>{{ label }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="field">
-                <span class="label">Source</span>
-                <select name="source">
-                    {% for value, label in source_options %}
-                    <option value="{{ value }}" {% if (filters.source or '') == value %}selected{% endif %}>{{ label }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="field">
-                <span class="label">Location</span>
-                <select name="location">
-                    {% for value, label in location_options %}
-                    <option value="{{ value }}" {% if (filters.location or '') == value %}selected{% endif %}>{{ label }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="field">
-                <span class="label">Experience Fit</span>
-                <select name="early_career">
-                    <option value="" {% if filters.early_career is none %}selected{% endif %}>All</option>
-                    <option value="true" {% if filters.early_career is true %}selected{% endif %}>Early-career only</option>
-                    <option value="false" {% if filters.early_career is false %}selected{% endif %}>Exclude early-career</option>
-                </select>
-            </div>
-            <div class="field">
-                <span class="label">Min Score</span>
-                <select name="min_experience_score">
-                    {% for value, label in score_options %}
-                    <option value="{{ value }}" {% if (filters.min_experience_score|string if filters.min_experience_score is not none else '') == value %}selected{% endif %}>{{ label }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="field">
-                <span class="label">Freshness</span>
-                <select name="new_since_hours">
-                    {% for value, label in freshness_options %}
-                    <option value="{{ value }}" {% if (filters.new_since_hours|string if filters.new_since_hours is not none else '') == value %}selected{% endif %}>{{ label }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <button type="submit">Apply Filters</button>
-            <a class="button-link" href="/">Reset</a>
+            <select name="role">
+                {% for value, label in role_options %}
+                <option value="{{ value }}" {% if filters.role == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <select name="source">
+                {% for value, label in source_options %}
+                <option value="{{ value }}" {% if filters.source == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <select name="location">
+                {% for value, label in location_options %}
+                <option value="{{ value }}" {% if filters.location == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <select name="early_career">
+                <option value="" {% if filters.early_career is none %}selected{% endif %}>all</option>
+                <option value="true" {% if filters.early_career is true %}selected{% endif %}>early-career only</option>
+                <option value="false" {% if filters.early_career is false %}selected{% endif %}>non-early-career</option>
+            </select>
+            <select name="min_experience_score">
+                {% for value, label in score_options %}
+                <option value="{{ value }}" {% if (filters.min_experience_score|string) == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <select name="new_since_hours">
+                {% for value, label in freshness_options %}
+                <option value="{{ value }}" {% if (filters.new_since_hours|string) == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit">Apply PM Filters</button>
         </form>
     </div>
 
@@ -127,7 +128,172 @@
             </tr>
             {% endfor %}
             {% if jobs|length == 0 %}
-            <tr><td colspan="8">No jobs found for current filters.</td></tr>
+            <tr><td colspan="8">No PM jobs found for current filters.</td></tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="panel">
+        <h2>Facebook Remote Leads</h2>
+        <div class="controls" style="margin-bottom:8px;">
+            <button id="fbDiscoverButton" type="button">Run Group Discovery</button>
+            <button id="fbRunButton" class="secondary" type="button">Run Facebook Collection</button>
+            <a href="/facebook/posts/export.csv" style="margin-left:auto;">Export Facebook CSV</a>
+        </div>
+        <div class="muted" id="fbRunStatus">
+            {% if latest_facebook_run %}
+            Facebook collect #{{ latest_facebook_run.run_id }}:
+            <span class="status">{{ latest_facebook_run.status }}</span>
+            (new={{ latest_facebook_run.total_new }}, updated={{ latest_facebook_run.total_updated }}, kept={{ latest_facebook_run.total_kept }})
+            {% else %}
+            No Facebook collection runs yet.
+            {% endif %}
+            <br>
+            {% if latest_discovery_run %}
+            Discovery #{{ latest_discovery_run.run_id }}: <span class="status">{{ latest_discovery_run.status }}</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="grid-2">
+        <div class="panel">
+            <h2>Pending Group Candidates</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Group</th>
+                        <th>Score</th>
+                        <th>Keyword</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for group in facebook_candidates %}
+                    <tr>
+                        <td>
+                            <a href="{{ group.group_url }}" target="_blank" rel="noopener">{{ group.name }}</a><br>
+                            <span class="muted">{{ group.group_external_id }}</span>
+                        </td>
+                        <td>{{ "%.2f"|format(group.relevance_score) }}</td>
+                        <td>{{ group.discovered_keyword }}</td>
+                        <td><button type="button" class="small" onclick="approveGroup('{{ group.group_external_id }}')">Approve</button></td>
+                    </tr>
+                {% endfor %}
+                {% if facebook_candidates|length == 0 %}
+                    <tr><td colspan="4">No pending groups.</td></tr>
+                {% endif %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="panel">
+            <h2>Tracked Groups</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Group</th>
+                        <th>Status</th>
+                        <th>Last Crawled</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for group in facebook_groups %}
+                    <tr>
+                        <td><a href="{{ group.group_url }}" target="_blank" rel="noopener">{{ group.name }}</a></td>
+                        <td>
+                            {% if group.is_active %}
+                                <span class="tag">active</span>
+                            {% else %}
+                                <span class="tag">disabled</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ group.last_crawled_at or '-' }}</td>
+                        <td>
+                            {% if group.is_active %}
+                            <button type="button" class="small danger" onclick="disableGroup('{{ group.group_external_id }}')">Disable</button>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                {% if facebook_groups|length == 0 %}
+                    <tr><td colspan="4">No approved groups yet.</td></tr>
+                {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Facebook Leads Filters</h2>
+        <form method="get" class="inline">
+            <input type="text" name="fb_group" placeholder="group external id" value="{{ facebook_filters.group or '' }}">
+            <select name="fb_category">
+                {% for value, label in facebook_category_options %}
+                <option value="{{ value }}" {% if facebook_filters.category == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <select name="fb_has_phone">
+                <option value="" {% if facebook_filters.has_phone is none %}selected{% endif %}>All posts</option>
+                <option value="true" {% if facebook_filters.has_phone is true %}selected{% endif %}>With phone</option>
+                <option value="false" {% if facebook_filters.has_phone is false %}selected{% endif %}>Without phone</option>
+            </select>
+            <input type="number" min="1" max="720" name="fb_new_since_hours" placeholder="hours" value="{{ facebook_filters.new_since_hours if facebook_filters.new_since_hours is not none else '' }}">
+            <button type="submit">Apply Facebook Filters</button>
+        </form>
+    </div>
+
+    <div class="panel">
+        <table>
+            <thead>
+                <tr>
+                    <th>Group</th>
+                    <th>Post</th>
+                    <th>Category</th>
+                    <th>Phones</th>
+                    <th>WhatsApp</th>
+                    <th>Screenshot</th>
+                    <th>Updated</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for post in facebook_posts %}
+                <tr>
+                    <td>{{ post.group_name }}<br><span class="muted">{{ post.group_external_id }}</span></td>
+                    <td>
+                        <div class="muted">{{ post.posted_at or '-' }}</div>
+                        <div>{{ post.post_excerpt }}</div>
+                        <a href="{{ post.post_url }}" target="_blank" rel="noopener">Open post</a>
+                    </td>
+                    <td><span class="tag">{{ post.category_tag }}</span></td>
+                    <td class="phones">
+                        {% for phone in post.phone_numbers %}
+                            <span>{{ phone }}</span>
+                        {% endfor %}
+                        {% if post.phone_numbers|length == 0 %}-{% endif %}
+                    </td>
+                    <td>
+                        {% for link in post.whatsapp_links %}
+                            <a href="{{ link }}" target="_blank" rel="noopener">WhatsApp</a><br>
+                        {% endfor %}
+                        {% if post.whatsapp_links|length == 0 %}-{% endif %}
+                    </td>
+                    <td>
+                        {% if post.screenshot_path %}
+                            <img class="thumb" src="/assets/screenshots/{{ post.screenshot_path }}" alt="Post screenshot">
+                            <a href="/assets/screenshots/{{ post.screenshot_path }}" target="_blank" rel="noopener">Open screenshot</a>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td>{{ post.content_updated_at }}</td>
+                </tr>
+            {% endfor %}
+            {% if facebook_posts|length == 0 %}
+                <tr><td colspan="7">No Facebook leads found for current filters.</td></tr>
             {% endif %}
             </tbody>
         </table>
@@ -136,28 +302,81 @@
     <script>
         async function postJson(url) {
             const res = await fetch(url, { method: "POST" });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            if (!res.ok) {
+                const body = await res.text();
+                throw new Error(`HTTP ${res.status}: ${body}`);
+            }
             return await res.json();
         }
-        document.getElementById("runNowButton").addEventListener("click", async () => {
-            const status = document.getElementById("runStatus");
-            status.textContent = "Running collection...";
+
+        async function approveGroup(groupId) {
+            const status = document.getElementById("fbRunStatus");
+            status.textContent = `Approving ${groupId}...`;
             try {
-                const data = await postJson("/runs/manual");
-                status.textContent = `Run #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                await postJson(`/facebook/groups/${encodeURIComponent(groupId)}/approve`);
+                status.textContent = `Approved ${groupId}.`;
                 window.location.reload();
             } catch (err) {
-                status.textContent = `Collection failed: ${err.message}`;
+                status.textContent = `Approve failed: ${err.message}`;
+            }
+        }
+
+        async function disableGroup(groupId) {
+            const status = document.getElementById("fbRunStatus");
+            status.textContent = `Disabling ${groupId}...`;
+            try {
+                await postJson(`/facebook/groups/${encodeURIComponent(groupId)}/disable`);
+                status.textContent = `Disabled ${groupId}.`;
+                window.location.reload();
+            } catch (err) {
+                status.textContent = `Disable failed: ${err.message}`;
+            }
+        }
+
+        document.getElementById("runNowButton").addEventListener("click", async () => {
+            const status = document.getElementById("runStatus");
+            status.textContent = "Running PM collection...";
+            try {
+                const data = await postJson("/runs/manual");
+                status.textContent = `PM run #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                window.location.reload();
+            } catch (err) {
+                status.textContent = `PM collection failed: ${err.message}`;
             }
         });
+
         document.getElementById("digestButton").addEventListener("click", async () => {
             const status = document.getElementById("runStatus");
-            status.textContent = "Sending digest...";
+            status.textContent = "Sending PM digest...";
             try {
                 const data = await postJson("/digest/manual");
                 status.textContent = `Digest status: ${data.status} (count=${data.count ?? 0})`;
             } catch (err) {
                 status.textContent = `Digest failed: ${err.message}`;
+            }
+        });
+
+        document.getElementById("fbDiscoverButton").addEventListener("click", async () => {
+            const status = document.getElementById("fbRunStatus");
+            status.textContent = "Running Facebook group discovery...";
+            try {
+                const data = await postJson("/facebook/discovery/run");
+                status.textContent = `Discovery #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                window.location.reload();
+            } catch (err) {
+                status.textContent = `Discovery failed: ${err.message}`;
+            }
+        });
+
+        document.getElementById("fbRunButton").addEventListener("click", async () => {
+            const status = document.getElementById("fbRunStatus");
+            status.textContent = "Running Facebook collection...";
+            try {
+                const data = await postJson("/facebook/runs/manual");
+                status.textContent = `Facebook run #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                window.location.reload();
+            } catch (err) {
+                status.textContent = `Facebook collection failed: ${err.message}`;
             }
         });
     </script>

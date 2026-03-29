@@ -5,6 +5,31 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def _load_env_file(path: str) -> None:
+    env_path = Path(path)
+    if not env_path.exists() or not env_path.is_file():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
 def _get_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -105,6 +130,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        _load_env_file(os.getenv("APP_ENV_FILE", ".env.local"))
         return cls(
             db_path=os.getenv("DB_PATH", "./data/jobs.db"),
             app_timezone=os.getenv("APP_TIMEZONE", "Africa/Cairo"),
