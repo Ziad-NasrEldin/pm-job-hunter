@@ -78,11 +78,19 @@ def test_manual_run_jobs_and_csv_export(monkeypatch, tmp_path):
         assert payload["count"] == 1
         assert payload["items"][0]["title"] == "Product Owner"
 
+        blank_filter_resp = client.get("/jobs?early_career=&min_experience_score=&new_since_hours=")
+        assert blank_filter_resp.status_code == 200
+        blank_payload = blank_filter_resp.json()
+        assert blank_payload["count"] == 1
+
         csv_resp = client.get("/jobs/export.csv")
         assert csv_resp.status_code == 200
         csv_text = csv_resp.text
         assert "title,company,location,source" in csv_text
         assert "Product Owner,Acme" in csv_text
+
+        dashboard_resp = client.get("/?early_career=&min_experience_score=&new_since_hours=")
+        assert dashboard_resp.status_code == 200
 
 
 def test_digest_payload_is_sent(monkeypatch, tmp_path):

@@ -12,6 +12,9 @@
         input, select, button { padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
         button { cursor: pointer; background: #0ea5e9; color: white; border: none; }
         button.secondary { background: #334155; }
+        .button-link { padding: 7px 10px; border-radius: 6px; background: #334155; color: white; text-decoration: none; }
+        .label { font-size: 12px; color: #475569; font-weight: 600; }
+        .field { display: flex; flex-direction: column; gap: 4px; min-width: 170px; }
         table { width: 100%; border-collapse: collapse; background: white; }
         th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: left; font-size: 13px; }
         th { background: #f1f5f9; }
@@ -42,19 +45,56 @@
 
     <div class="panel">
         <form method="get" class="inline">
-            <input type="text" name="role" placeholder="role family" value="{{ filters.role or '' }}">
-            <input type="text" name="source" placeholder="source" value="{{ filters.source or '' }}">
-            <input type="text" name="location" placeholder="location contains" value="{{ filters.location or '' }}">
-            <select name="early_career">
-                <option value="" {% if filters.early_career is none %}selected{% endif %}>all</option>
-                <option value="true" {% if filters.early_career is true %}selected{% endif %}>early-career only</option>
-                <option value="false" {% if filters.early_career is false %}selected{% endif %}>non-early-career</option>
-            </select>
-            <input type="number" step="0.05" min="0" max="1" name="min_experience_score" placeholder="min score"
-                value="{{ filters.min_experience_score if filters.min_experience_score is not none else '' }}">
-            <input type="number" min="1" max="720" name="new_since_hours" placeholder="hours"
-                value="{{ filters.new_since_hours if filters.new_since_hours is not none else '' }}">
+            <div class="field">
+                <span class="label">Role</span>
+                <select name="role">
+                    {% for value, label in role_options %}
+                    <option value="{{ value }}" {% if (filters.role or '') == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <span class="label">Source</span>
+                <select name="source">
+                    {% for value, label in source_options %}
+                    <option value="{{ value }}" {% if (filters.source or '') == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <span class="label">Location</span>
+                <select name="location">
+                    {% for value, label in location_options %}
+                    <option value="{{ value }}" {% if (filters.location or '') == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <span class="label">Experience Fit</span>
+                <select name="early_career">
+                    <option value="" {% if filters.early_career is none %}selected{% endif %}>All</option>
+                    <option value="true" {% if filters.early_career is true %}selected{% endif %}>Early-career only</option>
+                    <option value="false" {% if filters.early_career is false %}selected{% endif %}>Exclude early-career</option>
+                </select>
+            </div>
+            <div class="field">
+                <span class="label">Min Score</span>
+                <select name="min_experience_score">
+                    {% for value, label in score_options %}
+                    <option value="{{ value }}" {% if (filters.min_experience_score|string if filters.min_experience_score is not none else '') == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <span class="label">Freshness</span>
+                <select name="new_since_hours">
+                    {% for value, label in freshness_options %}
+                    <option value="{{ value }}" {% if (filters.new_since_hours|string if filters.new_since_hours is not none else '') == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
             <button type="submit">Apply Filters</button>
+            <a class="button-link" href="/">Reset</a>
         </form>
     </div>
 

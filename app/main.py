@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
@@ -51,6 +51,51 @@ def _job_filters(
     }
 
 
+def _parse_optional_str(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _parse_optional_bool(value: str | None) -> bool | None:
+    cleaned = _parse_optional_str(value)
+    if cleaned is None:
+        return None
+    lowered = cleaned.lower()
+    if lowered in {"true", "1", "yes", "on"}:
+        return True
+    if lowered in {"false", "0", "no", "off"}:
+        return False
+    return None
+
+
+def _parse_optional_float(value: str | None, minimum: float, maximum: float) -> float | None:
+    cleaned = _parse_optional_str(value)
+    if cleaned is None:
+        return None
+    try:
+        parsed = float(cleaned)
+    except ValueError:
+        return None
+    if parsed < minimum or parsed > maximum:
+        return None
+    return parsed
+
+
+def _parse_optional_int(value: str | None, minimum: int, maximum: int) -> int | None:
+    cleaned = _parse_optional_str(value)
+    if cleaned is None:
+        return None
+    try:
+        parsed = int(cleaned)
+    except ValueError:
+        return None
+    if parsed < minimum or parsed > maximum:
+        return None
+    return parsed
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.ensure_db_dir()
@@ -83,17 +128,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         role: str | None = None,
         source: str | None = None,
         location: str | None = None,
-        early_career: bool | None = None,
-        min_experience_score: float | None = Query(default=None, ge=0.0, le=1.0),
-        new_since_hours: int | None = Query(default=24, ge=1, le=168),
+        early_career: str | None = None,
+        min_experience_score: str | None = None,
+        new_since_hours: str | None = "24",
     ):
+        parsed_early_career = _parse_optional_bool(early_career)
+        parsed_min_score = _parse_optional_float(min_experience_score, minimum=0.0, maximum=1.0)
+        parsed_new_since = _parse_optional_int(new_since_hours, minimum=1, maximum=168)
         filters = _job_filters(
-            role=role,
-            source=source,
-            location=location,
-            early_career=early_career,
-            min_experience_score=min_experience_score,
-            new_since_hours=new_since_hours,
+            role=_parse_optional_str(role),
+            source=_parse_optional_str(source),
+            location=_parse_optional_str(location),
+            early_career=parsed_early_career,
+            min_experience_score=parsed_min_score,
+            new_since_hours=parsed_new_since,
         )
         jobs = request.app.state.db.list_jobs(**filters, limit=300)
         latest_run = _run_to_dict(request.app.state.db.get_latest_run())
@@ -105,6 +153,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "latest_run": latest_run,
                 "filters": filters,
                 "timezone": settings.app_timezone,
+                "role_options": [
+                    ("", "All roles"),
+                    ("product_owner", "Product Owner"),
+                    ("product_manager", "Product Manager"),
+                    ("associate_product_manager", "APM"),
+                ],
+                "source_options": [
+                    ("", "All sources"),
+                    ("linkedin_public", "LinkedIn (Public)"),
+                    ("greenhouse", "Greenhouse"),
+                    ("lever", "Lever"),
+                ],
+                "location_options": [
+                    ("", "All locations"),
+                    ("Remote", "Remote"),
+                    ("Egypt", "Egypt"),
+                    ("United Arab Emirates", "UAE"),
+                    ("Saudi Arabia", "Saudi Arabia"),
+                    ("Qatar", "Qatar"),
+                    ("Kuwait", "Kuwait"),
+                    ("Bahrain", "Bahrain"),
+                    ("Oman", "Oman"),
+                    ("Jordan", "Jordan"),
+                    ("Morocco", "Morocco"),
+                ],
+                "score_options": [
+                    ("", "Any score"),
+                    ("0.3", ">= 0.30"),
+                    ("0.45", ">= 0.45"),
+                    ("0.6", ">= 0.60"),
+                    ("0.75", ">= 0.75"),
+                ],
+                "freshness_options": [
+                    ("", "Any time"),
+                    ("24", "Last 24h"),
+                    ("72", "Last 3 days"),
+                    ("168", "Last 7 days"),
+                ],
             },
         )
 
@@ -131,17 +217,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         role: str | None = None,
         source: str | None = None,
         location: str | None = None,
-        early_career: bool | None = None,
-        min_experience_score: float | None = Query(default=None, ge=0.0, le=1.0),
-        new_since_hours: int | None = Query(default=None, ge=1, le=720),
+        early_career: str | None = None,
+        min_experience_score: str | None = None,
+        new_since_hours: str | None = None,
     ):
         filters = _job_filters(
-            role=role,
-            source=source,
-            location=location,
-            early_career=early_career,
-            min_experience_score=min_experience_score,
-            new_since_hours=new_since_hours,
+            role=_parse_optional_str(role),
+            source=_parse_optional_str(source),
+            location=_parse_optional_str(location),
+            early_career=_parse_optional_bool(early_career),
+            min_experience_score=_parse_optional_float(min_experience_score, minimum=0.0, maximum=1.0),
+            new_since_hours=_parse_optional_int(new_since_hours, minimum=1, maximum=720),
         )
         jobs = request.app.state.db.list_jobs(**filters, limit=500)
         return {"count": len(jobs), "items": jobs}
@@ -152,17 +238,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         role: str | None = None,
         source: str | None = None,
         location: str | None = None,
-        early_career: bool | None = None,
-        min_experience_score: float | None = Query(default=None, ge=0.0, le=1.0),
-        new_since_hours: int | None = Query(default=None, ge=1, le=720),
+        early_career: str | None = None,
+        min_experience_score: str | None = None,
+        new_since_hours: str | None = None,
     ):
         filters = _job_filters(
-            role=role,
-            source=source,
-            location=location,
-            early_career=early_career,
-            min_experience_score=min_experience_score,
-            new_since_hours=new_since_hours,
+            role=_parse_optional_str(role),
+            source=_parse_optional_str(source),
+            location=_parse_optional_str(location),
+            early_career=_parse_optional_bool(early_career),
+            min_experience_score=_parse_optional_float(min_experience_score, minimum=0.0, maximum=1.0),
+            new_since_hours=_parse_optional_int(new_since_hours, minimum=1, maximum=720),
         )
         jobs = request.app.state.db.list_jobs(**filters, limit=5000)
 
@@ -209,4 +295,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
-
