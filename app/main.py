@@ -167,6 +167,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ],
                 "location_options": [
                     ("", "All locations"),
+                    ("Alexandria", "Alexandria"),
+                    ("Cairo", "Cairo"),
+                    ("__remote_outside__", "Remote (Outside Egypt)"),
                     ("Remote", "Remote"),
                     ("Egypt", "Egypt"),
                     ("United Arab Emirates", "UAE"),

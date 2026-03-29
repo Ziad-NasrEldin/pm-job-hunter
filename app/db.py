@@ -29,6 +29,19 @@ def _parse(dt: str | None) -> datetime | None:
     return datetime.fromisoformat(dt)
 
 
+LOCATION_PRIORITY_SQL = """
+CASE
+    WHEN lower(location) LIKE '%alexandria%' THEN 0
+    WHEN lower(location) LIKE '%cairo%' THEN 1
+    WHEN lower(location) LIKE '%remote%'
+         AND lower(location) NOT LIKE '%egypt%'
+         AND lower(location) NOT LIKE '%alexandria%'
+         AND lower(location) NOT LIKE '%cairo%' THEN 2
+    ELSE 3
+END
+"""
+
+
 class Database:
     def __init__(self, path: str) -> None:
         self.path = path
@@ -300,8 +313,14 @@ class Database:
             where.append("source = ?")
             values.append(source)
         if location:
-            where.append("location LIKE ?")
-            values.append(f"%{location}%")
+            if location == "__remote_outside__":
+                where.append("lower(location) LIKE '%remote%'")
+                where.append("lower(location) NOT LIKE '%egypt%'")
+                where.append("lower(location) NOT LIKE '%alexandria%'")
+                where.append("lower(location) NOT LIKE '%cairo%'")
+            else:
+                where.append("location LIKE ?")
+                values.append(f"%{location}%")
         if early_career is not None:
             where.append("is_early_career = ?")
             values.append(int(early_career))
@@ -318,7 +337,7 @@ class Database:
         SELECT *
         FROM jobs
         {clause}
-        ORDER BY role_priority DESC, early_career_score DESC, content_updated_at DESC
+        ORDER BY {LOCATION_PRIORITY_SQL} ASC, role_priority DESC, early_career_score DESC, content_updated_at DESC
         LIMIT ?
         """
         values.append(limit)
@@ -336,7 +355,19 @@ class Database:
                        posted_at, content_updated_at
                 FROM jobs
                 WHERE content_updated_at >= ?
-                ORDER BY role_priority DESC, early_career_score DESC, content_updated_at DESC
+                ORDER BY
+                    CASE
+                        WHEN lower(location) LIKE '%alexandria%' THEN 0
+                        WHEN lower(location) LIKE '%cairo%' THEN 1
+                        WHEN lower(location) LIKE '%remote%'
+                             AND lower(location) NOT LIKE '%egypt%'
+                             AND lower(location) NOT LIKE '%alexandria%'
+                             AND lower(location) NOT LIKE '%cairo%' THEN 2
+                        ELSE 3
+                    END ASC,
+                    role_priority DESC,
+                    early_career_score DESC,
+                    content_updated_at DESC
                 LIMIT ?
                 """,
                 (cutoff, limit),
@@ -357,4 +388,3 @@ class Database:
                 )
             )
         return items
-

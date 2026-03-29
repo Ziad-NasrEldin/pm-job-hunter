@@ -46,6 +46,57 @@ class FakeAdapter:
         return None
 
 
+class LocationPriorityAdapter:
+    source_name = "fake_source"
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def fetch_jobs(self, _query):
+        now = datetime.now(UTC)
+        return [
+            RawJob(
+                source="fake_source",
+                external_id="alex",
+                title="Product Owner",
+                company="Acme",
+                location="Alexandria, Egypt",
+                description="0-2 years experience",
+                job_url="https://example.com/jobs/alex",
+                apply_url="https://example.com/jobs/alex/apply",
+                posted_at=now,
+                metadata={},
+            ),
+            RawJob(
+                source="fake_source",
+                external_id="cairo",
+                title="Product Owner",
+                company="Acme",
+                location="Cairo, Egypt",
+                description="0-2 years experience",
+                job_url="https://example.com/jobs/cairo",
+                apply_url="https://example.com/jobs/cairo/apply",
+                posted_at=now,
+                metadata={},
+            ),
+            RawJob(
+                source="fake_source",
+                external_id="remote_outside",
+                title="Product Owner",
+                company="Acme",
+                location="Remote - Germany",
+                description="0-2 years experience",
+                job_url="https://example.com/jobs/remote-outside",
+                apply_url="https://example.com/jobs/remote-outside/apply",
+                posted_at=now,
+                metadata={},
+            ),
+        ]
+
+    def close(self):
+        return None
+
+
 def _settings(tmp_path) -> Settings:
     return Settings(
         db_path=str(tmp_path / "test.db"),
@@ -118,3 +169,21 @@ def test_digest_payload_is_sent(monkeypatch, tmp_path):
         assert body["count"] == 1
         assert captured["payload"]["url"] == "https://api.resend.com/emails"
         assert captured["payload"]["json"]["to"] == ["to@example.com"]
+
+
+def test_location_priority_sort_and_filter(monkeypatch, tmp_path):
+    monkeypatch.setattr(JobCollector, "_build_adapters", lambda self: [LocationPriorityAdapter(self.settings)])
+    app = create_app(_settings(tmp_path))
+
+    with TestClient(app) as client:
+        run_resp = client.post("/runs/manual")
+        assert run_resp.status_code == 200
+
+        all_jobs = client.get("/jobs").json()["items"]
+        assert all_jobs[0]["location"] == "Alexandria, Egypt"
+        assert all_jobs[1]["location"] == "Cairo, Egypt"
+        assert all_jobs[2]["location"] == "Remote - Germany"
+
+        remote_outside = client.get("/jobs?location=__remote_outside__").json()["items"]
+        assert len(remote_outside) == 1
+        assert remote_outside[0]["location"] == "Remote - Germany"
