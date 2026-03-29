@@ -1,0 +1,29 @@
+[
+  {
+    "id": "abc123",
+    "text": "Product Owner",
+    "categories": {
+      "location": "Remote",
+      "team": "Product"
+    },
+    "hostedUrl": "https://jobs.lever.co/test/abc123",
+    "applyUrl": "https://jobs.lever.co/test/abc123/apply",
+    "createdAt": 1774099200000,
+    "descriptionPlain": "Entry level role with up to 4 years of experience",
+    "listsPlain": "",
+    "additionalPlain": ""
+  },
+  {
+    "id": "def456",
+    "text": "Engineering Manager",
+    "categories": {
+      "location": "Riyadh, Saudi Arabia",
+      "team": "Engineering"
+    },
+    "hostedUrl": "https://jobs.lever.co/test/def456",
+    "createdAt": 1774012800000,
+    "descriptionPlain": "Not a product role",
+    "listsPlain": "",
+    "additionalPlain": ""
+  }
+]

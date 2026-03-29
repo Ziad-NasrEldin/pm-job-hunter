@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PM Job Hunter Dashboard</title>
+    <style>
+        body { font-family: "Segoe UI", Tahoma, sans-serif; margin: 24px; background: #f8fafc; color: #0f172a; }
+        h1 { margin-bottom: 8px; }
+        .panel { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+        form.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        input, select, button { padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
+        button { cursor: pointer; background: #0ea5e9; color: white; border: none; }
+        button.secondary { background: #334155; }
+        table { width: 100%; border-collapse: collapse; background: white; }
+        th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: left; font-size: 13px; }
+        th { background: #f1f5f9; }
+        .muted { color: #475569; font-size: 13px; }
+        .status { font-weight: 600; }
+    </style>
+</head>
+<body>
+    <h1>PM Job Hunter</h1>
+    <p class="muted">Timezone: {{ timezone }} | Product Owner > Product Manager > APM</p>
+
+    <div class="panel">
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <button id="runNowButton" type="button">Run Collection Now</button>
+            <button id="digestButton" class="secondary" type="button">Send Digest Now</button>
+            <a href="/jobs/export.csv" style="margin-left:auto;">Export CSV</a>
+        </div>
+        <div class="muted" id="runStatus">
+            {% if latest_run %}
+            Last run #{{ latest_run.run_id }}:
+            <span class="status">{{ latest_run.status }}</span>
+            (new={{ latest_run.total_new }}, updated={{ latest_run.total_updated }}, kept={{ latest_run.total_kept }})
+            {% else %}
+            No runs yet.
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="panel">
+        <form method="get" class="inline">
+            <input type="text" name="role" placeholder="role family" value="{{ filters.role or '' }}">
+            <input type="text" name="source" placeholder="source" value="{{ filters.source or '' }}">
+            <input type="text" name="location" placeholder="location contains" value="{{ filters.location or '' }}">
+            <select name="early_career">
+                <option value="" {% if filters.early_career is none %}selected{% endif %}>all</option>
+                <option value="true" {% if filters.early_career is true %}selected{% endif %}>early-career only</option>
+                <option value="false" {% if filters.early_career is false %}selected{% endif %}>non-early-career</option>
+            </select>
+            <input type="number" step="0.05" min="0" max="1" name="min_experience_score" placeholder="min score"
+                value="{{ filters.min_experience_score if filters.min_experience_score is not none else '' }}">
+            <input type="number" min="1" max="720" name="new_since_hours" placeholder="hours"
+                value="{{ filters.new_since_hours if filters.new_since_hours is not none else '' }}">
+            <button type="submit">Apply Filters</button>
+        </form>
+    </div>
+
+    <div class="panel">
+        <table>
+            <thead>
+            <tr>
+                <th>Title</th>
+                <th>Company</th>
+                <th>Location</th>
+                <th>Source</th>
+                <th>Role</th>
+                <th>Score</th>
+                <th>Apply</th>
+                <th>Updated</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for job in jobs %}
+            <tr>
+                <td>{{ job.title }}</td>
+                <td>{{ job.company }}</td>
+                <td>{{ job.location }}</td>
+                <td>{{ job.source }}</td>
+                <td>{{ job.role_family }}</td>
+                <td>{{ "%.2f"|format(job.early_career_score) }}</td>
+                <td><a href="{{ job.apply_url }}" target="_blank" rel="noopener">Apply</a></td>
+                <td>{{ job.content_updated_at }}</td>
+            </tr>
+            {% endfor %}
+            {% if jobs|length == 0 %}
+            <tr><td colspan="8">No jobs found for current filters.</td></tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        async function postJson(url) {
+            const res = await fetch(url, { method: "POST" });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+        }
+        document.getElementById("runNowButton").addEventListener("click", async () => {
+            const status = document.getElementById("runStatus");
+            status.textContent = "Running collection...";
+            try {
+                const data = await postJson("/runs/manual");
+                status.textContent = `Run #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                window.location.reload();
+            } catch (err) {
+                status.textContent = `Collection failed: ${err.message}`;
+            }
+        });
+        document.getElementById("digestButton").addEventListener("click", async () => {
+            const status = document.getElementById("runStatus");
+            status.textContent = "Sending digest...";
+            try {
+                const data = await postJson("/digest/manual");
+                status.textContent = `Digest status: ${data.status} (count=${data.count ?? 0})`;
+            } catch (err) {
+                status.textContent = `Digest failed: ${err.message}`;
+            }
+        });
+    </script>
+</body>
+</html>

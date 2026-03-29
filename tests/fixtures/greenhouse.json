@@ -1,0 +1,23 @@
+{
+  "meta": {
+    "board": "test-board"
+  },
+  "jobs": [
+    {
+      "id": 11,
+      "title": "Product Manager",
+      "location": { "name": "Dubai, United Arab Emirates" },
+      "absolute_url": "https://boards.greenhouse.io/test-board/jobs/11",
+      "updated_at": "2026-03-21T08:00:00Z",
+      "content": "0-3 years experience in product management"
+    },
+    {
+      "id": 12,
+      "title": "Senior Product Manager",
+      "location": { "name": "Cairo, Egypt" },
+      "absolute_url": "https://boards.greenhouse.io/test-board/jobs/12",
+      "updated_at": "2026-03-20T08:00:00Z",
+      "content": "6+ years experience"
+    }
+  ]
+}
