@@ -185,6 +185,18 @@
             </div>
         </div>
 
+        <div class="panel">
+            <h2>Import Tracked Groups</h2>
+            <p class="muted">Paste existing Facebook group URLs or group IDs (one per line). Optional format: <code>Name | URL</code>.</p>
+            <div class="controls" style="align-items:flex-start;">
+                <textarea id="fbImportInput" rows="5" style="width:100%; min-height:110px;" placeholder="https://www.facebook.com/groups/1386469535434819/\nhttps://www.facebook.com/groups/another.group/\nMy Group | https://www.facebook.com/groups/1234567890/"></textarea>
+            </div>
+            <div class="controls" style="margin-top:8px;">
+                <button id="fbImportButton" type="button">Import Tracked Groups</button>
+                <span id="fbImportStatus" class="muted"></span>
+            </div>
+        </div>
+
         <div class="grid-2">
             <div class="panel">
                 <h2>Pending Group Candidates</h2>
@@ -353,8 +365,13 @@
             window.location.assign(url.toString());
         }
 
-        async function postJson(url) {
-            const res = await fetch(url, { method: "POST" });
+        async function postJson(url, payload = null) {
+            const options = { method: "POST" };
+            if (payload !== null) {
+                options.headers = { "Content-Type": "application/json" };
+                options.body = JSON.stringify(payload);
+            }
+            const res = await fetch(url, options);
             if (!res.ok) {
                 const body = await res.text();
                 throw new Error(`HTTP ${res.status}: ${body}`);
@@ -471,6 +488,28 @@
                 reloadPreservingTab();
             } catch (err) {
                 status.textContent = `Facebook collection failed: ${err.message}`;
+            }
+        });
+
+        document.getElementById("fbImportButton").addEventListener("click", async () => {
+            const status = document.getElementById("fbImportStatus");
+            const runStatus = document.getElementById("fbRunStatus");
+            const input = document.getElementById("fbImportInput");
+            const text = (input.value || "").trim();
+            if (!text) {
+                status.textContent = "Paste at least one Facebook group URL or ID.";
+                return;
+            }
+
+            status.textContent = "Importing tracked groups...";
+            try {
+                const data = await postJson("/facebook/groups/import", { text });
+                status.textContent = `Imported ${data.imported} groups (new=${data.new}, updated=${data.updated}, unchanged=${data.unchanged}).`;
+                runStatus.textContent = `Group import completed. Imported ${data.imported} groups.`;
+                await refreshFacebookStatus();
+                reloadPreservingTab();
+            } catch (err) {
+                status.textContent = `Import failed: ${err.message}`;
             }
         });
 

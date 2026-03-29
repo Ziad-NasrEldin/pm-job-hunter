@@ -601,6 +601,116 @@ class Database:
         result["metadata"] = json.loads(result.pop("metadata_json", "{}") or "{}")
         return result
 
+    def import_facebook_group(
+        self,
+        *,
+        group_external_id: str,
+        name: str,
+        group_url: str,
+        description: str = "",
+        metadata: dict[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> str:
+        now = now or _utcnow()
+        now_iso = _iso(now)
+        metadata_json = json.dumps(metadata or {"source": "manual_import"})
+
+        with self._lock, self.connect() as conn:
+            existing_candidate = conn.execute(
+                "SELECT id, status, name, group_url, description, metadata_json FROM facebook_group_candidates WHERE group_external_id = ?",
+                (group_external_id,),
+            ).fetchone()
+            if existing_candidate is None:
+                conn.execute(
+                    """
+                    INSERT INTO facebook_group_candidates(
+                        group_external_id, name, group_url, description, relevance_score,
+                        discovered_keyword, status, metadata_json, created_at, updated_at, last_seen_at
+                    )
+                    VALUES (?, ?, ?, ?, 1.0, 'manual_import', 'approved', ?, ?, ?, ?)
+                    """,
+                    (
+                        group_external_id,
+                        name,
+                        group_url,
+                        description,
+                        metadata_json,
+                        now_iso,
+                        now_iso,
+                        now_iso,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE facebook_group_candidates
+                    SET name = ?, group_url = ?, description = ?, status = 'approved',
+                        metadata_json = ?, updated_at = ?, last_seen_at = ?
+                    WHERE group_external_id = ?
+                    """,
+                    (
+                        name,
+                        group_url,
+                        description,
+                        metadata_json,
+                        now_iso,
+                        now_iso,
+                        group_external_id,
+                    ),
+                )
+
+            existing_group = conn.execute(
+                "SELECT id, name, group_url, is_active, metadata_json FROM facebook_groups WHERE group_external_id = ?",
+                (group_external_id,),
+            ).fetchone()
+
+            outcome = "new"
+            if existing_group is None:
+                conn.execute(
+                    """
+                    INSERT INTO facebook_groups(
+                        group_external_id, name, group_url, is_active, approved_at,
+                        metadata_json, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+                    """,
+                    (
+                        group_external_id,
+                        name,
+                        group_url,
+                        now_iso,
+                        metadata_json,
+                        now_iso,
+                        now_iso,
+                    ),
+                )
+                outcome = "new"
+            else:
+                changed = (
+                    existing_group["name"] != name
+                    or existing_group["group_url"] != group_url
+                    or int(existing_group["is_active"]) != 1
+                    or (existing_group["metadata_json"] or "{}") != metadata_json
+                )
+                conn.execute(
+                    """
+                    UPDATE facebook_groups
+                    SET name = ?, group_url = ?, is_active = 1, metadata_json = ?, updated_at = ?
+                    WHERE group_external_id = ?
+                    """,
+                    (
+                        name,
+                        group_url,
+                        metadata_json,
+                        now_iso,
+                        group_external_id,
+                    ),
+                )
+                outcome = "updated" if changed else "unchanged"
+
+            conn.commit()
+            return outcome
+
     def disable_facebook_group(self, group_external_id: str, now: datetime | None = None) -> bool:
         now = now or _utcnow()
         now_iso = _iso(now)

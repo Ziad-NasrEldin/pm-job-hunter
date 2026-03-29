@@ -38,3 +38,4 @@ def test_global_facebook_quick_actions_visible_on_facebook_tab(tmp_path):
         assert "Facebook Login" in resp.text
         assert "Run Facebook Scraper" in resp.text
         assert "Run Group Discovery" in resp.text
+        assert "Import Tracked Groups" in resp.text

@@ -6,6 +6,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from bs4 import BeautifulSoup
 
+_GROUP_URL_RE = re.compile(r"https?://[^\s,|]+facebook\.com/[^\s,|]*groups/[^\s,|]+", re.I)
+_GROUP_ID_RE = re.compile(r"^(\d{5,}|[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+)$")
+
 
 def parse_group_external_id(group_url: str) -> str:
     parsed = urlparse(group_url)
@@ -131,3 +134,56 @@ def parse_posts_from_html(html: str) -> list[dict]:
         )
 
     return posts
+
+
+def parse_imported_groups_text(raw_text: str) -> list[dict]:
+    lines = [line.strip() for line in (raw_text or "").splitlines()]
+    items: list[dict] = []
+    seen_ids: set[str] = set()
+
+    for line in lines:
+        if not line:
+            continue
+
+        name_hint = ""
+        value = line
+        if "|" in line:
+            left, right = line.split("|", 1)
+            name_hint = left.strip()
+            value = right.strip()
+
+        url_match = _GROUP_URL_RE.search(value) or _GROUP_URL_RE.search(line)
+        if url_match:
+            group_url = normalize_facebook_url(url_match.group(0).rstrip(".,;"))
+            group_external_id = parse_group_external_id(group_url)
+            if group_external_id in seen_ids:
+                continue
+            seen_ids.add(group_external_id)
+            items.append(
+                {
+                    "group_external_id": group_external_id,
+                    "group_url": group_url,
+                    "name": name_hint or group_external_id,
+                    "description": f"Imported from user list ({line[:120]})",
+                }
+            )
+            continue
+
+        token = value.strip().strip(".,;")
+        if not _GROUP_ID_RE.match(token):
+            continue
+
+        group_external_id = token
+        if group_external_id in seen_ids:
+            continue
+        seen_ids.add(group_external_id)
+        items.append(
+            {
+                "group_external_id": group_external_id,
+                "group_url": f"https://www.facebook.com/groups/{group_external_id}/",
+                "name": name_hint or group_external_id,
+                "description": "Imported from user list (id)",
+            }
+        )
+
+    return items

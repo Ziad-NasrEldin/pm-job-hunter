@@ -211,3 +211,42 @@ def test_facebook_status_disabled(tmp_path):
         assert payload["facebook_enabled"] is False
         assert payload["can_collect"] is False
         assert "disabled" in payload["blocking_reason"].lower()
+
+
+def test_import_facebook_groups_endpoint(tmp_path):
+    app = create_app(_settings(tmp_path))
+    with TestClient(app) as client:
+        payload = {
+            "text": "\n".join(
+                [
+                    "https://www.facebook.com/groups/1386469535434819/",
+                    "Call Center Egypt | https://www.facebook.com/groups/1234567890/",
+                    "egypt.remote.jobs",
+                ]
+            )
+        }
+        resp = client.post("/facebook/groups/import", json=payload)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "success"
+        assert body["imported"] == 3
+        assert body["new"] == 3
+
+        groups_resp = client.get("/facebook/groups/candidates?status=approved")
+        assert groups_resp.status_code == 200
+        groups_body = groups_resp.json()
+        assert groups_body["count"] >= 3
+
+        status_resp = client.get("/facebook/status")
+        assert status_resp.status_code == 200
+        status_body = status_resp.json()
+        assert status_body["approved_groups_count"] >= 3
+
+
+def test_import_facebook_groups_endpoint_rejects_empty(tmp_path):
+    app = create_app(_settings(tmp_path))
+    with TestClient(app) as client:
+        resp = client.post("/facebook/groups/import", json={"text": "not-a-group-line"})
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["status"] == "empty"

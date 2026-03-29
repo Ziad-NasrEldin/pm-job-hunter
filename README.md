@@ -21,6 +21,7 @@ Local-first FastAPI app that aggregates:
   - post-card screenshot + raw HTML snapshot storage
 - Dashboard support for:
   - approving/disabling groups
+  - importing tracked groups from existing lists (group URLs or IDs)
   - filtering Facebook leads
   - screenshot preview/open
   - CSV export for Facebook leads
@@ -40,6 +41,7 @@ Local-first FastAPI app that aggregates:
    - Recommended: use dashboard quick action `Facebook Login` (opens browser and waits for login automatically).
    - CLI fallback: `python -m app.cli facebook-login`
    - Session is saved to `FACEBOOK_STORAGE_STATE_PATH`, used by discovery/collection runs.
+   - You can skip discovery and import tracked groups directly from your existing list in dashboard.
 5. Start app:
    - `uvicorn app.main:app --reload`
 6. Open dashboard:
@@ -102,6 +104,7 @@ Notes:
 - `POST /facebook/discovery/run`
 - `GET /facebook/status`
 - `GET /facebook/groups/candidates`
+- `POST /facebook/groups/import`
 - `POST /facebook/groups/{group_id}/approve`
 - `POST /facebook/groups/{group_id}/disable`
 - `POST /facebook/runs/manual`

@@ -10,13 +10,19 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
 from app.collector import JobCollector
 from app.config import Settings
 from app.db import Database
 from app.digest import DigestService
 from app.facebook_collector import FacebookCollector
+from app.facebook_parser import parse_imported_groups_text
 from app.scheduler import build_scheduler
+
+
+class FacebookGroupImportPayload(BaseModel):
+    text: str = Field(default="", description="Multi-line group list (URLs/IDs)")
 
 
 def _run_to_dict(run) -> dict[str, Any] | None:
@@ -434,6 +440,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not disabled:
             return JSONResponse({"message": "group not found"}, status_code=404)
         return JSONResponse({"status": "disabled", "group_external_id": group_id})
+
+    @app.post("/facebook/groups/import")
+    def import_facebook_groups(request: Request, payload: FacebookGroupImportPayload):
+        parsed_items = parse_imported_groups_text(payload.text)
+        if not parsed_items:
+            return JSONResponse(
+                {
+                    "status": "empty",
+                    "message": "No valid Facebook group links or IDs found in import text.",
+                    "total_lines": len([line for line in payload.text.splitlines() if line.strip()]),
+                    "imported": 0,
+                    "new": 0,
+                    "updated": 0,
+                    "unchanged": 0,
+                },
+                status_code=400,
+            )
+
+        counters = {"new": 0, "updated": 0, "unchanged": 0}
+        imported_items: list[dict[str, str]] = []
+        for item in parsed_items:
+            outcome = request.app.state.db.import_facebook_group(
+                group_external_id=item["group_external_id"],
+                name=item["name"],
+                group_url=item["group_url"],
+                description=item["description"],
+                metadata={"source": "manual_import", "raw": item["description"]},
+            )
+            counters[outcome] = counters.get(outcome, 0) + 1
+            imported_items.append(
+                {
+                    "group_external_id": item["group_external_id"],
+                    "name": item["name"],
+                    "group_url": item["group_url"],
+                    "outcome": outcome,
+                }
+            )
+
+        return JSONResponse(
+            {
+                "status": "success",
+                "imported": len(imported_items),
+                "new": counters.get("new", 0),
+                "updated": counters.get("updated", 0),
+                "unchanged": counters.get("unchanged", 0),
+                "items": imported_items,
+            }
+        )
 
     @app.post("/facebook/runs/manual")
     def facebook_collect_manual(request: Request):
