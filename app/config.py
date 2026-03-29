@@ -55,6 +55,9 @@ class Settings:
     request_backoff_seconds: float = 1.25
     mnea_locations: list[str] = field(
         default_factory=lambda: [
+            "Alexandria",
+            "Cairo",
+            "Remote",
             "Egypt",
             "Saudi Arabia",
             "United Arab Emirates",
@@ -64,7 +67,6 @@ class Settings:
             "Oman",
             "Jordan",
             "Morocco",
-            "Remote",
         ]
     )
     role_keywords: list[str] = field(
@@ -77,6 +79,29 @@ class Settings:
     )
     greenhouse_boards: list[str] = field(default_factory=list)
     lever_companies: list[str] = field(default_factory=list)
+    facebook_enabled: bool = True
+    facebook_profile_dir: str = "./data/facebook_profile"
+    facebook_headless: bool = True
+    facebook_crawl_days: int = 30
+    facebook_retention_days: int = 90
+    facebook_collection_interval_hours: int = 2
+    facebook_discovery_hour: int = 8
+    facebook_discovery_minute: int = 0
+    facebook_discovery_keywords: list[str] = field(
+        default_factory=lambda: [
+            "وظائف عن بعد مصر",
+            "work from home egypt",
+            "كول سنتر من المنزل",
+            "telesales remote egypt",
+            "وظائف خدمة عملاء من البيت",
+        ]
+    )
+    facebook_discovery_max_groups: int = 80
+    facebook_discovery_scrolls: int = 5
+    facebook_max_scrolls_per_group: int = 18
+    facebook_max_posts_per_group: int = 240
+    facebook_screenshots_dir: str = "./data/screenshots/facebook"
+    facebook_raw_dir: str = "./data/raw/facebook"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -96,6 +121,9 @@ class Settings:
             mnea_locations=_get_list(
                 "MENA_LOCATIONS",
                 [
+                    "Alexandria",
+                    "Cairo",
+                    "Remote",
                     "Egypt",
                     "Saudi Arabia",
                     "United Arab Emirates",
@@ -105,7 +133,6 @@ class Settings:
                     "Oman",
                     "Jordan",
                     "Morocco",
-                    "Remote",
                 ],
             ),
             role_keywords=_get_list(
@@ -119,6 +146,30 @@ class Settings:
             ),
             greenhouse_boards=_get_list("GREENHOUSE_BOARDS", []),
             lever_companies=_get_list("LEVER_COMPANIES", []),
+            facebook_enabled=_get_bool("FACEBOOK_ENABLED", True),
+            facebook_profile_dir=os.getenv("FACEBOOK_PROFILE_DIR", "./data/facebook_profile"),
+            facebook_headless=_get_bool("FACEBOOK_HEADLESS", True),
+            facebook_crawl_days=_get_int("FACEBOOK_CRAWL_DAYS", 30),
+            facebook_retention_days=_get_int("FACEBOOK_RETENTION_DAYS", 90),
+            facebook_collection_interval_hours=_get_int("FACEBOOK_COLLECTION_INTERVAL_HOURS", 2),
+            facebook_discovery_hour=_get_int("FACEBOOK_DISCOVERY_HOUR", 8),
+            facebook_discovery_minute=_get_int("FACEBOOK_DISCOVERY_MINUTE", 0),
+            facebook_discovery_keywords=_get_list(
+                "FACEBOOK_DISCOVERY_KEYWORDS",
+                [
+                    "وظائف عن بعد مصر",
+                    "work from home egypt",
+                    "كول سنتر من المنزل",
+                    "telesales remote egypt",
+                    "وظائف خدمة عملاء من البيت",
+                ],
+            ),
+            facebook_discovery_max_groups=_get_int("FACEBOOK_DISCOVERY_MAX_GROUPS", 80),
+            facebook_discovery_scrolls=_get_int("FACEBOOK_DISCOVERY_SCROLLS", 5),
+            facebook_max_scrolls_per_group=_get_int("FACEBOOK_MAX_SCROLLS_PER_GROUP", 18),
+            facebook_max_posts_per_group=_get_int("FACEBOOK_MAX_POSTS_PER_GROUP", 240),
+            facebook_screenshots_dir=os.getenv("FACEBOOK_SCREENSHOTS_DIR", "./data/screenshots/facebook"),
+            facebook_raw_dir=os.getenv("FACEBOOK_RAW_DIR", "./data/raw/facebook"),
         )
 
     def ensure_db_dir(self) -> None:
@@ -126,3 +177,8 @@ class Settings:
         if db_file.parent and str(db_file.parent) != ".":
             db_file.parent.mkdir(parents=True, exist_ok=True)
 
+    def ensure_runtime_dirs(self) -> None:
+        self.ensure_db_dir()
+        Path(self.facebook_profile_dir).mkdir(parents=True, exist_ok=True)
+        Path(self.facebook_screenshots_dir).mkdir(parents=True, exist_ok=True)
+        Path(self.facebook_raw_dir).mkdir(parents=True, exist_ok=True)

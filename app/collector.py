@@ -21,6 +21,30 @@ class JobCollector:
             LeverAdapter(self.settings),
         ]
 
+    def _build_prioritized_locations(self) -> list[str]:
+        priority_first = ["Alexandria", "Cairo", "Remote"]
+        raw_locations = self.settings.mnea_locations or []
+        seen: set[str] = set()
+        ordered: list[str] = []
+
+        for location in priority_first:
+            key = location.strip().lower()
+            if key in seen:
+                continue
+            ordered.append(location)
+            seen.add(key)
+
+        for location in raw_locations:
+            cleaned = location.strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            ordered.append(cleaned)
+            seen.add(key)
+        return ordered
+
     def run_once(self) -> RunSummary:
         started_at = datetime.now(UTC)
         run_id = self.db.create_run(started_at)
@@ -32,7 +56,7 @@ class JobCollector:
 
         query = SearchQuery(
             keywords=self.settings.role_keywords,
-            locations=self.settings.mnea_locations,
+            locations=self._build_prioritized_locations(),
             max_pages=self.settings.linkedin_max_pages,
         )
 
@@ -89,4 +113,3 @@ class JobCollector:
             total_updated=total_updated,
             errors=errors,
         )
-
