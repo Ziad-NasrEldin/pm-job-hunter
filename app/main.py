@@ -129,6 +129,35 @@ def _parse_optional_int(value: str | None, minimum: int, maximum: int) -> int | 
     return parsed
 
 
+def _build_facebook_status(
+    *,
+    settings: Settings,
+    db: Database,
+) -> dict[str, Any]:
+    session_ready = Path(settings.facebook_storage_state_path).exists()
+    approved_groups_count = len(db.list_facebook_groups(active_only=True, limit=10_000))
+    latest_collect_run = _facebook_run_to_dict(db.get_latest_facebook_run(mode="collect"))
+    latest_discovery_run = _facebook_run_to_dict(db.get_latest_facebook_run(mode="discovery"))
+
+    blocking_reason: str | None = None
+    if not settings.facebook_enabled:
+        blocking_reason = "Facebook scraping is disabled in configuration."
+    elif not session_ready:
+        blocking_reason = "Facebook login session not found. Run facebook-login first."
+    elif approved_groups_count == 0:
+        blocking_reason = "No approved active Facebook groups. Approve groups first."
+
+    return {
+        "facebook_enabled": settings.facebook_enabled,
+        "session_ready": session_ready,
+        "approved_groups_count": approved_groups_count,
+        "latest_collect_run": latest_collect_run,
+        "latest_discovery_run": latest_discovery_run,
+        "can_collect": blocking_reason is None,
+        "blocking_reason": blocking_reason,
+    }
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.ensure_runtime_dirs()
@@ -384,6 +413,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def facebook_group_candidates(request: Request, status: str | None = None):
         items = request.app.state.db.list_facebook_group_candidates(status=_parse_optional_str(status), limit=500)
         return {"count": len(items), "items": items}
+
+    @app.get("/facebook/status")
+    def facebook_status(request: Request):
+        return _build_facebook_status(
+            settings=request.app.state.settings,
+            db=request.app.state.db,
+        )
 
     @app.post("/facebook/groups/{group_id}/approve")
     def approve_facebook_group(request: Request, group_id: str):

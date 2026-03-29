@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -13,10 +14,26 @@ def _settings(tmp_path) -> Settings:
         db_path=str(tmp_path / "test.db"),
         enable_scheduler=False,
         facebook_enabled=True,
+        facebook_storage_state_path=str(tmp_path / "facebook_storage_state.json"),
         facebook_screenshots_dir=str(tmp_path / "screenshots"),
         facebook_raw_dir=str(tmp_path / "raw"),
         facebook_profile_dir=str(tmp_path / "profile"),
     )
+
+
+def _approve_group(db, group_id: str = "1234567890") -> None:
+    candidate = FacebookGroupCandidate(
+        group_external_id=group_id,
+        name="وظائف عن بعد مصر",
+        group_url=f"https://www.facebook.com/groups/{group_id}/",
+        description="Egypt remote jobs",
+        relevance_score=0.9,
+        discovered_keyword="وظائف عن بعد مصر",
+        metadata={},
+    )
+    db.upsert_facebook_group_candidate(candidate)
+    approved = db.approve_facebook_group(group_id)
+    assert approved is not None
 
 
 def test_facebook_discovery_approval_and_export(tmp_path):
@@ -120,3 +137,77 @@ def test_facebook_discovery_approval_and_export(tmp_path):
         disable_resp = client.post("/facebook/groups/1234567890/disable")
         assert disable_resp.status_code == 200
         assert disable_resp.json()["status"] == "disabled"
+
+
+def test_facebook_status_ready(tmp_path):
+    settings = _settings(tmp_path)
+    Path(settings.facebook_storage_state_path).write_text("{}", encoding="utf-8")
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        db = client.app.state.db
+        _approve_group(db)
+        now = datetime.now(UTC)
+        run_id = db.create_facebook_run(now, mode="collect")
+        db.finalize_facebook_run(
+            run_id=run_id,
+            status="success",
+            total_fetched=3,
+            total_kept=2,
+            total_new=2,
+            total_updated=0,
+            errors=[],
+            finished_at=now,
+        )
+
+        resp = client.get("/facebook/status")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["facebook_enabled"] is True
+        assert payload["session_ready"] is True
+        assert payload["approved_groups_count"] == 1
+        assert payload["can_collect"] is True
+        assert payload["blocking_reason"] is None
+        assert payload["latest_collect_run"]["status"] == "success"
+
+
+def test_facebook_status_missing_login(tmp_path):
+    app = create_app(_settings(tmp_path))
+    with TestClient(app) as client:
+        db = client.app.state.db
+        _approve_group(db)
+        resp = client.get("/facebook/status")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["session_ready"] is False
+        assert payload["can_collect"] is False
+        assert "login session not found" in payload["blocking_reason"].lower()
+
+
+def test_facebook_status_no_groups(tmp_path):
+    settings = _settings(tmp_path)
+    Path(settings.facebook_storage_state_path).write_text("{}", encoding="utf-8")
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        resp = client.get("/facebook/status")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["approved_groups_count"] == 0
+        assert payload["can_collect"] is False
+        assert "no approved active facebook groups" in payload["blocking_reason"].lower()
+
+
+def test_facebook_status_disabled(tmp_path):
+    settings = _settings(tmp_path)
+    settings.facebook_enabled = False
+    Path(settings.facebook_storage_state_path).write_text("{}", encoding="utf-8")
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        resp = client.get("/facebook/status")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["facebook_enabled"] is False
+        assert payload["can_collect"] is False
+        assert "disabled" in payload["blocking_reason"].lower()

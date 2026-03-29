@@ -24,6 +24,7 @@ Local-first FastAPI app that aggregates:
   - filtering Facebook leads
   - screenshot preview/open
   - CSV export for Facebook leads
+  - global quick actions bar with `Run Facebook Scraper` and `Run Group Discovery`
 
 ## Quick Start
 1. Create virtual environment and install dependencies:
@@ -53,9 +54,32 @@ Local-first FastAPI app that aggregates:
    - `http://127.0.0.1:<port>/?tab=pm`
 
 Notes:
-- Put your `.env.local` next to the EXE (or run from repo root).  
-- Facebook automation still needs Playwright browsers installed once:
-  - `playwright install chromium`
+- In installed/frozen mode, runtime data uses `%LOCALAPPDATA%\PMJobHunter\...`.
+- If `%LOCALAPPDATA%\PMJobHunter\.env.local` is missing, it is auto-created from `.env.local.example`.
+
+## Windows Installer (Shareable)
+1. Build installer locally:
+   - `powershell -ExecutionPolicy Bypass -File .\scripts\build_installer.ps1 -Version v0.2.0`
+2. Output:
+   - `.\dist\PMJobHunter-Setup.exe`
+3. Installer includes:
+   - `PMJobHunter.exe`
+   - `.env.local.example`
+   - Playwright Chromium runtime under `%LOCALAPPDATA%\PMJobHunter\ms-playwright`
+
+## GitHub Release Pipeline
+- Tag push `v*` triggers `.github/workflows/release-windows.yml`.
+- Pipeline steps:
+  - run tests
+  - build portable EXE
+  - build installer EXE
+  - generate `SHA256SUMS.txt`
+  - publish assets to GitHub Release
+- Artifacts:
+  - `PMJobHunter.exe`
+  - `PMJobHunter-Setup.exe`
+  - `env.local.example`
+  - `SHA256SUMS.txt`
 
 ## CLI Commands
 - `python -m app.cli collect`
@@ -74,6 +98,7 @@ Notes:
 ### Facebook Jobs
 - `POST /facebook/login/bootstrap`
 - `POST /facebook/discovery/run`
+- `GET /facebook/status`
 - `GET /facebook/groups/candidates`
 - `POST /facebook/groups/{group_id}/approve`
 - `POST /facebook/groups/{group_id}/disable`

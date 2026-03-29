@@ -41,15 +41,29 @@
         .tab-btn.active { background: var(--brand); color: #fff; border-color: var(--brand); }
         .tab-panel { display: none; }
         .tab-panel.active { display: block; }
+        .status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+        .status-card { border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; padding: 8px; font-size: 12px; }
+        .status-card strong { display: block; font-size: 13px; margin-bottom: 2px; }
         @media (max-width: 980px) {
             .grid-2 { grid-template-columns: 1fr; }
             table { display: block; overflow-x: auto; }
+            .status-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
     <h1>PM Job Hunter</h1>
     <p class="muted">Timezone: {{ timezone }} | Includes LinkedIn/Greenhouse/Lever + Facebook remote jobs (Arabic + English)</p>
+
+    <div class="panel">
+        <h2>Quick Actions</h2>
+        <div class="controls">
+            <button id="quickFbRunButton" type="button">Run Facebook Scraper</button>
+            <button id="quickFbDiscoverButton" class="secondary" type="button">Run Group Discovery</button>
+            <span id="quickActionStatus" class="muted">Checking Facebook status...</span>
+        </div>
+        <div id="quickFbStatusGrid" class="status-grid"></div>
+    </div>
 
     <div class="tabs">
         <button id="tabBtnPm" class="tab-btn" type="button" onclick="switchTab('pm')">PM Search</button>
@@ -317,6 +331,7 @@
 
     <script>
         let activeTab = "{{ active_tab }}";
+        let cachedFacebookStatus = null;
 
         function switchTab(tabName) {
             activeTab = tabName;
@@ -344,6 +359,45 @@
                 throw new Error(`HTTP ${res.status}: ${body}`);
             }
             return await res.json();
+        }
+
+        async function getJson(url) {
+            const res = await fetch(url);
+            if (!res.ok) {
+                const body = await res.text();
+                throw new Error(`HTTP ${res.status}: ${body}`);
+            }
+            return await res.json();
+        }
+
+        function runLabel(run) {
+            if (!run) return "-";
+            return `#${run.run_id} (${run.status})`;
+        }
+
+        function renderFacebookStatus(statusData) {
+            const grid = document.getElementById("quickFbStatusGrid");
+            const enabledText = statusData.facebook_enabled ? "Enabled" : "Disabled";
+            const sessionText = statusData.session_ready ? "Ready" : "Missing";
+            const collectText = runLabel(statusData.latest_collect_run);
+            const discoverText = runLabel(statusData.latest_discovery_run);
+            const canCollectText = statusData.can_collect ? "Ready to run" : (statusData.blocking_reason || "Blocked");
+
+            grid.innerHTML = `
+                <div class="status-card"><strong>Feature</strong>${enabledText}</div>
+                <div class="status-card"><strong>Session</strong>${sessionText}</div>
+                <div class="status-card"><strong>Approved Groups</strong>${statusData.approved_groups_count}</div>
+                <div class="status-card"><strong>Collect Run</strong>${collectText}</div>
+                <div class="status-card"><strong>Discovery Run</strong>${discoverText}</div>
+                <div class="status-card"><strong>Preflight</strong>${canCollectText}</div>
+            `;
+        }
+
+        async function refreshFacebookStatus() {
+            const status = await getJson("/facebook/status");
+            cachedFacebookStatus = status;
+            renderFacebookStatus(status);
+            return status;
         }
 
         async function approveGroup(groupId) {
@@ -399,6 +453,7 @@
             try {
                 const data = await postJson("/facebook/discovery/run");
                 status.textContent = `Discovery #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                await refreshFacebookStatus();
                 reloadPreservingTab();
             } catch (err) {
                 status.textContent = `Discovery failed: ${err.message}`;
@@ -411,10 +466,55 @@
             try {
                 const data = await postJson("/facebook/runs/manual");
                 status.textContent = `Facebook run #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                await refreshFacebookStatus();
                 reloadPreservingTab();
             } catch (err) {
                 status.textContent = `Facebook collection failed: ${err.message}`;
             }
+        });
+
+        document.getElementById("quickFbRunButton").addEventListener("click", async () => {
+            const actionStatus = document.getElementById("quickActionStatus");
+            actionStatus.textContent = "Checking status before running Facebook scraper...";
+            try {
+                const statusData = await refreshFacebookStatus();
+                if (!statusData.can_collect) {
+                    actionStatus.textContent = `Cannot run Facebook scraper: ${statusData.blocking_reason || "Preflight blocked."}`;
+                    return;
+                }
+
+                actionStatus.textContent = "Running Facebook scraper...";
+                const data = await postJson("/facebook/runs/manual");
+                actionStatus.textContent = `Facebook run #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                await refreshFacebookStatus();
+                reloadPreservingTab();
+            } catch (err) {
+                actionStatus.textContent = `Facebook scraper failed: ${err.message}`;
+            }
+        });
+
+        document.getElementById("quickFbDiscoverButton").addEventListener("click", async () => {
+            const actionStatus = document.getElementById("quickActionStatus");
+            actionStatus.textContent = "Running Facebook group discovery...";
+            try {
+                const data = await postJson("/facebook/discovery/run");
+                actionStatus.textContent = `Discovery #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                await refreshFacebookStatus();
+                reloadPreservingTab();
+            } catch (err) {
+                actionStatus.textContent = `Discovery failed: ${err.message}`;
+            }
+        });
+
+        refreshFacebookStatus().then((statusData) => {
+            const actionStatus = document.getElementById("quickActionStatus");
+            if (statusData.can_collect) {
+                actionStatus.textContent = "Facebook scraper is ready to run.";
+            } else {
+                actionStatus.textContent = `Facebook scraper blocked: ${statusData.blocking_reason || "Preflight failed."}`;
+            }
+        }).catch((err) => {
+            document.getElementById("quickActionStatus").textContent = `Failed to load Facebook status: ${err.message}`;
         });
 
         switchTab(activeTab === "facebook" ? "facebook" : "pm");

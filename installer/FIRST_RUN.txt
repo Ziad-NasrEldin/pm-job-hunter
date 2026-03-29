@@ -1,0 +1,15 @@
+PM Job Hunter - First Run Notes
+
+1) The app opens in your browser on launch.
+2) Local config file:
+   %LOCALAPPDATA%\PMJobHunter\.env.local
+3) Local data path:
+   %LOCALAPPDATA%\PMJobHunter\data
+
+Facebook setup:
+1) Open the app and go to "Facebook Scraper" tab.
+2) Run "Group Discovery", approve groups, then use "Run Facebook Scraper".
+3) If Facebook session is missing, run:
+   python -m app.cli facebook-login
+
+Note: this release is unsigned, so Windows SmartScreen may show a warning.

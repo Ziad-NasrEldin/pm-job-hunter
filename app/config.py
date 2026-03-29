@@ -2,8 +2,20 @@ from __future__ import annotations
 
 import os
 import sys
+from shutil import copyfile
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+def _is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def _default_runtime_root() -> Path:
+    local_app_data = os.getenv("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / "PMJobHunter"
+    return Path.home() / "AppData" / "Local" / "PMJobHunter"
 
 
 def _resolve_env_file(path: str) -> Path:
@@ -12,7 +24,7 @@ def _resolve_env_file(path: str) -> Path:
         return requested
 
     candidates: list[Path] = [Path.cwd() / requested]
-    if getattr(sys, "frozen", False):
+    if _is_frozen():
         candidates.append(Path(sys.executable).resolve().parent / requested)
     candidates.append(Path(__file__).resolve().parent.parent / requested)
 
@@ -45,6 +57,43 @@ def _load_env_file(path: str | Path) -> None:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
         os.environ.setdefault(key, value)
+
+
+def _bootstrap_env_file(env_path: Path) -> None:
+    if env_path.exists():
+        return
+
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    template_candidates = [
+        Path(sys.executable).resolve().parent / ".env.local.example",
+        Path(__file__).resolve().parent.parent / ".env.local.example",
+    ]
+    for template in template_candidates:
+        if template.exists() and template.is_file():
+            copyfile(template, env_path)
+            return
+
+    env_path.write_text("# PM Job Hunter local environment\n", encoding="utf-8")
+
+
+def _coalesce_frozen_path(
+    name: str,
+    fallback: str,
+    legacy_relative_values: set[str],
+) -> str:
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+
+    cleaned = raw.strip()
+    if not cleaned:
+        return fallback
+
+    normalized = cleaned.replace("\\", "/").lstrip("./")
+    normalized_candidates = {value.replace("\\", "/").lstrip("./") for value in legacy_relative_values}
+    if normalized in normalized_candidates:
+        return fallback
+    return cleaned
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -145,12 +194,74 @@ class Settings:
     facebook_max_posts_per_group: int = 240
     facebook_screenshots_dir: str = "./data/screenshots/facebook"
     facebook_raw_dir: str = "./data/raw/facebook"
+    playwright_browsers_path: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
-        _load_env_file(_resolve_env_file(os.getenv("APP_ENV_FILE", ".env.local")))
+        runtime_root = _default_runtime_root() if _is_frozen() else None
+        default_env_file = str(runtime_root / ".env.local") if runtime_root else ".env.local"
+        env_file = _resolve_env_file(os.getenv("APP_ENV_FILE", default_env_file))
+        if runtime_root and env_file == (runtime_root / ".env.local"):
+            _bootstrap_env_file(env_file)
+        _load_env_file(env_file)
+
+        default_db_path = str(runtime_root / "data" / "jobs.db") if runtime_root else "./data/jobs.db"
+        default_facebook_profile_dir = (
+            str(runtime_root / "data" / "facebook_profile") if runtime_root else "./data/facebook_profile"
+        )
+        default_facebook_storage_state = (
+            str(runtime_root / "data" / "facebook_storage_state.json")
+            if runtime_root
+            else "./data/facebook_storage_state.json"
+        )
+        default_facebook_screenshots = (
+            str(runtime_root / "data" / "screenshots" / "facebook")
+            if runtime_root
+            else "./data/screenshots/facebook"
+        )
+        default_facebook_raw = str(runtime_root / "data" / "raw" / "facebook") if runtime_root else "./data/raw/facebook"
+        default_playwright_browsers_path = str(runtime_root / "ms-playwright") if runtime_root else None
+        playwright_browsers_path = os.getenv("PLAYWRIGHT_BROWSERS_PATH", default_playwright_browsers_path or "")
+        if playwright_browsers_path:
+            os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", playwright_browsers_path)
+
+        db_path_value = os.getenv("DB_PATH", default_db_path)
+        facebook_profile_dir_value = os.getenv("FACEBOOK_PROFILE_DIR", default_facebook_profile_dir)
+        facebook_storage_state_value = os.getenv("FACEBOOK_STORAGE_STATE_PATH", default_facebook_storage_state)
+        facebook_screenshots_dir_value = os.getenv("FACEBOOK_SCREENSHOTS_DIR", default_facebook_screenshots)
+        facebook_raw_dir_value = os.getenv("FACEBOOK_RAW_DIR", default_facebook_raw)
+
+        if runtime_root:
+            db_path_value = _coalesce_frozen_path("DB_PATH", default_db_path, {"./data/jobs.db"})
+            facebook_profile_dir_value = _coalesce_frozen_path(
+                "FACEBOOK_PROFILE_DIR",
+                default_facebook_profile_dir,
+                {"./data/facebook_profile"},
+            )
+            facebook_storage_state_value = _coalesce_frozen_path(
+                "FACEBOOK_STORAGE_STATE_PATH",
+                default_facebook_storage_state,
+                {"./data/facebook_storage_state.json"},
+            )
+            facebook_screenshots_dir_value = _coalesce_frozen_path(
+                "FACEBOOK_SCREENSHOTS_DIR",
+                default_facebook_screenshots,
+                {"./data/screenshots/facebook"},
+            )
+            facebook_raw_dir_value = _coalesce_frozen_path(
+                "FACEBOOK_RAW_DIR",
+                default_facebook_raw,
+                {"./data/raw/facebook"},
+            )
+            playwright_browsers_path = _coalesce_frozen_path(
+                "PLAYWRIGHT_BROWSERS_PATH",
+                default_playwright_browsers_path or "",
+                {"./ms-playwright"},
+            )
+            os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", playwright_browsers_path)
+
         return cls(
-            db_path=os.getenv("DB_PATH", "./data/jobs.db"),
+            db_path=db_path_value,
             app_timezone=os.getenv("APP_TIMEZONE", "Africa/Cairo"),
             resend_api_key=os.getenv("RESEND_API_KEY"),
             digest_from_email=os.getenv("DIGEST_FROM_EMAIL"),
@@ -191,8 +302,8 @@ class Settings:
             greenhouse_boards=_get_list("GREENHOUSE_BOARDS", []),
             lever_companies=_get_list("LEVER_COMPANIES", []),
             facebook_enabled=_get_bool("FACEBOOK_ENABLED", True),
-            facebook_profile_dir=os.getenv("FACEBOOK_PROFILE_DIR", "./data/facebook_profile"),
-            facebook_storage_state_path=os.getenv("FACEBOOK_STORAGE_STATE_PATH", "./data/facebook_storage_state.json"),
+            facebook_profile_dir=facebook_profile_dir_value,
+            facebook_storage_state_path=facebook_storage_state_value,
             facebook_headless=_get_bool("FACEBOOK_HEADLESS", False),
             facebook_crawl_days=_get_int("FACEBOOK_CRAWL_DAYS", 30),
             facebook_retention_days=_get_int("FACEBOOK_RETENTION_DAYS", 90),
@@ -213,8 +324,9 @@ class Settings:
             facebook_discovery_scrolls=_get_int("FACEBOOK_DISCOVERY_SCROLLS", 5),
             facebook_max_scrolls_per_group=_get_int("FACEBOOK_MAX_SCROLLS_PER_GROUP", 18),
             facebook_max_posts_per_group=_get_int("FACEBOOK_MAX_POSTS_PER_GROUP", 240),
-            facebook_screenshots_dir=os.getenv("FACEBOOK_SCREENSHOTS_DIR", "./data/screenshots/facebook"),
-            facebook_raw_dir=os.getenv("FACEBOOK_RAW_DIR", "./data/raw/facebook"),
+            facebook_screenshots_dir=facebook_screenshots_dir_value,
+            facebook_raw_dir=facebook_raw_dir_value,
+            playwright_browsers_path=playwright_browsers_path or None,
         )
 
     def ensure_db_dir(self) -> None:
@@ -230,3 +342,5 @@ class Settings:
             storage_path.parent.mkdir(parents=True, exist_ok=True)
         Path(self.facebook_screenshots_dir).mkdir(parents=True, exist_ok=True)
         Path(self.facebook_raw_dir).mkdir(parents=True, exist_ok=True)
+        if self.playwright_browsers_path:
+            Path(self.playwright_browsers_path).mkdir(parents=True, exist_ok=True)
