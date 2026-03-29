@@ -140,7 +140,8 @@ class FacebookCollector:
         groups = self.db.list_facebook_groups(active_only=True)
         if not groups:
             finished_at = datetime.now(UTC)
-            status = "success"
+            status = "no_groups"
+            errors = ["No approved active groups found. Approve groups in dashboard first."]
             self.db.finalize_facebook_run(
                 run_id=run_id,
                 status=status,
@@ -148,7 +149,7 @@ class FacebookCollector:
                 total_kept=0,
                 total_new=0,
                 total_updated=0,
-                errors=[],
+                errors=errors,
                 finished_at=finished_at,
             )
             return FacebookRunSummary(
@@ -161,7 +162,7 @@ class FacebookCollector:
                 total_kept=0,
                 total_new=0,
                 total_updated=0,
-                errors=[],
+                errors=errors,
             )
 
         adapter = self._build_adapter()

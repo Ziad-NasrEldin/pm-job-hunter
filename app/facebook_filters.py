@@ -36,9 +36,9 @@ JOB_KEYWORDS = [
     "التوظيف",
 ]
 
-GROUP_EGYPT_MARKERS = ["egypt", "cairo", "alexandria", "egy", "مصر", "القاهرة", "اسكندرية", "الإسكندرية"]
-GROUP_REMOTE_MARKERS = ["remote", "work from home", "عن بعد", "من المنزل", "من البيت", "اونلاين", "أونلاين"]
-GROUP_JOB_MARKERS = ["jobs", "job", "hiring", "وظائف", "وظيفة", "فرص عمل", "مطلوب"]
+GROUP_EGYPT_MARKERS = ["egypt", "cairo", "alexandria", "giza", "egy", "مصر", "القاهرة", "اسكندرية", "الإسكندرية", "الجيزة"]
+GROUP_REMOTE_MARKERS = ["remote", "work from home", "wfh", "عن بعد", "من المنزل", "من البيت", "اونلاين", "أونلاين", "ريموت"]
+GROUP_JOB_MARKERS = ["jobs", "job", "hiring", "vacancy", "وظائف", "وظيفة", "فرص عمل", "مطلوب", "توظيف", "شغل"]
 
 CATEGORY_KEYWORDS = {
     "cold_calling": [
@@ -179,14 +179,22 @@ def classify_job_category(text: str) -> str:
 
 
 def score_group_relevance(name: str, description: str, keyword: str) -> float:
-    haystack = normalize_search_text(f"{name} {description} {keyword}")
+    group_text = normalize_search_text(f"{name} {description}")
+    keyword_text = normalize_search_text(keyword)
+
     score = 0.0
-    if any(marker in haystack for marker in GROUP_EGYPT_MARKERS):
+    if any(marker in group_text for marker in GROUP_EGYPT_MARKERS):
         score += 0.45
-    if any(marker in haystack for marker in GROUP_JOB_MARKERS):
+    if any(marker in group_text for marker in GROUP_JOB_MARKERS):
         score += 0.35
-    if any(marker in haystack for marker in GROUP_REMOTE_MARKERS):
+    if any(marker in group_text for marker in GROUP_REMOTE_MARKERS):
         score += 0.20
+
+    # Small boost only if search keyword appears in the group content.
+    keyword_tokens = [token for token in keyword_text.split(" ") if len(token) >= 3]
+    if keyword_tokens and any(token in group_text for token in keyword_tokens):
+        score += 0.10
+
     return round(min(score, 1.0), 3)
 
 

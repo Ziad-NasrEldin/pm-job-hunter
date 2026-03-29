@@ -5,6 +5,7 @@ from app.facebook_filters import (
     facebook_post_dedupe_key,
     is_strict_remote_post,
     normalize_arabic_digits,
+    score_group_relevance,
 )
 
 
@@ -41,3 +42,18 @@ def test_facebook_dedupe_key_is_stable():
     key1 = facebook_post_dedupe_key("group1", "post1", "https://facebook.com/post1")
     key2 = facebook_post_dedupe_key("group1", "post1", "https://facebook.com/post1")
     assert key1 == key2
+
+
+def test_group_relevance_depends_on_group_text_not_keyword_only():
+    weak = score_group_relevance(
+        name="Community Club",
+        description="General talks",
+        keyword="وظائف عن بعد مصر",
+    )
+    strong = score_group_relevance(
+        name="وظائف عن بعد مصر",
+        description="Remote jobs and hiring in Egypt",
+        keyword="وظائف عن بعد مصر",
+    )
+    assert weak < 0.35
+    assert strong >= 0.8

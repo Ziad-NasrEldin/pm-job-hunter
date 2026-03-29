@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from hashlib import sha1
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -23,17 +23,29 @@ def parse_group_external_id(group_url: str) -> str:
     return sha1(group_url.encode("utf-8")).hexdigest()[:16]
 
 
+def normalize_facebook_url(raw_url: str) -> str:
+    url = (raw_url or "").strip()
+    if not url:
+        return ""
+    if url.startswith("/"):
+        url = f"https://www.facebook.com{url}"
+    if "l.facebook.com/l.php" in url:
+        parsed = urlparse(url)
+        target = parse_qs(parsed.query).get("u", [""])[0]
+        if target:
+            url = unquote(target)
+    return url
+
+
 def parse_group_candidates_from_html(html: str, discovered_keyword: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
     seen: set[str] = set()
     candidates: list[dict] = []
 
     for anchor in soup.select("a[href*='/groups/']"):
-        href = (anchor.get("href") or "").strip()
+        href = normalize_facebook_url(anchor.get("href") or "")
         if not href:
             continue
-        if href.startswith("/"):
-            href = f"https://www.facebook.com{href}"
         if "facebook.com/groups/" not in href:
             continue
 
@@ -46,7 +58,8 @@ def parse_group_candidates_from_html(html: str, discovered_keyword: str) -> list
             continue
         seen.add(group_external_id)
 
-        container_text = anchor.find_parent().get_text(" ", strip=True) if anchor.find_parent() else name
+        aria = (anchor.get("aria-label") or "").strip()
+        container_text = aria or name
         candidates.append(
             {
                 "group_external_id": group_external_id,
@@ -96,9 +109,9 @@ def parse_posts_from_html(html: str) -> list[dict]:
             continue
 
         links = [
-            href if not href.startswith("/") else f"https://www.facebook.com{href}"
+            normalize_facebook_url(href)
             for href in [a.get("href", "") for a in node.find_all("a")]
-            if href
+            if normalize_facebook_url(href)
         ]
         permalink = next((link for link in links if _is_candidate_post_link(link)), None)
         if permalink is None:

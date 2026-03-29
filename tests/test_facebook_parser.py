@@ -1,11 +1,21 @@
 from pathlib import Path
 
-from app.facebook_parser import parse_group_candidates_from_html, parse_group_external_id, parse_posts_from_html
+from app.facebook_parser import (
+    normalize_facebook_url,
+    parse_group_candidates_from_html,
+    parse_group_external_id,
+    parse_posts_from_html,
+)
 
 
 def test_parse_group_external_id_from_url():
     assert parse_group_external_id("https://www.facebook.com/groups/1234567890/") == "1234567890"
     assert parse_group_external_id("https://www.facebook.com/groups/egypt.remote.jobs/") == "egypt.remote.jobs"
+
+
+def test_normalize_facebook_url_from_redirect_wrapper():
+    raw = "https://l.facebook.com/l.php?u=https%3A%2F%2Fwww.facebook.com%2Fgroups%2F1234567890%2F"
+    assert normalize_facebook_url(raw) == "https://www.facebook.com/groups/1234567890/"
 
 
 def test_parse_group_candidates_fixture():

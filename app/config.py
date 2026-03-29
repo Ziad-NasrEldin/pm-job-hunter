@@ -106,7 +106,7 @@ class Settings:
     lever_companies: list[str] = field(default_factory=list)
     facebook_enabled: bool = True
     facebook_profile_dir: str = "./data/facebook_profile"
-    facebook_headless: bool = True
+    facebook_headless: bool = False
     facebook_crawl_days: int = 30
     facebook_retention_days: int = 90
     facebook_collection_interval_hours: int = 2
@@ -174,7 +174,7 @@ class Settings:
             lever_companies=_get_list("LEVER_COMPANIES", []),
             facebook_enabled=_get_bool("FACEBOOK_ENABLED", True),
             facebook_profile_dir=os.getenv("FACEBOOK_PROFILE_DIR", "./data/facebook_profile"),
-            facebook_headless=_get_bool("FACEBOOK_HEADLESS", True),
+            facebook_headless=_get_bool("FACEBOOK_HEADLESS", False),
             facebook_crawl_days=_get_int("FACEBOOK_CRAWL_DAYS", 30),
             facebook_retention_days=_get_int("FACEBOOK_RETENTION_DAYS", 90),
             facebook_collection_interval_hours=_get_int("FACEBOOK_COLLECTION_INTERVAL_HOURS", 2),

@@ -15,7 +15,11 @@ from app.facebook_filters import (
     is_strict_remote_post,
     score_group_relevance,
 )
-from app.facebook_parser import parse_group_candidates_from_html
+from app.facebook_parser import (
+    normalize_facebook_url,
+    parse_group_candidates_from_html,
+    parse_group_external_id,
+)
 from app.facebook_time import parse_facebook_time
 from app.models import FacebookGroupCandidate, FacebookPost
 
@@ -34,6 +38,21 @@ _POST_ID_PATTERNS = [
     re.compile(r"/permalink/(\d+)", re.I),
     re.compile(r"story_fbid=(\d+)", re.I),
     re.compile(r"multi_permalinks=(\d+)", re.I),
+]
+
+_GROUP_SEARCH_URLS = [
+    "https://www.facebook.com/groups/search/?q={query}",
+    "https://www.facebook.com/search/groups/?q={query}",
+]
+
+_GROUP_URL_EXCLUDE_TOKENS = [
+    "/groups/feed",
+    "/groups/discover",
+    "/groups/you",
+    "/groups/join",
+    "/groups/create",
+    "/groups/?",
+    "/groups/?ref",
 ]
 
 
@@ -71,6 +90,7 @@ class FacebookGroupsAdapter:
             )
             input()
             page.goto("https://www.facebook.com/me", wait_until="domcontentloaded", timeout=90_000)
+            self._ensure_authenticated(page, "login bootstrap")
             return {"status": "ready", "message": "Facebook session saved to persistent profile."}
         finally:
             context.close()
@@ -80,33 +100,36 @@ class FacebookGroupsAdapter:
         playwright, context = self._open_context(headless=self.settings.facebook_headless)
         try:
             page = context.new_page()
+            page.goto("https://www.facebook.com/me", wait_until="domcontentloaded", timeout=90_000)
+            self._ensure_authenticated(page, "group discovery")
+
             deduped: dict[str, FacebookGroupCandidate] = {}
 
             for keyword in self.settings.facebook_discovery_keywords:
-                url = f"https://www.facebook.com/search/groups/?q={quote_plus(keyword)}"
-                page.goto(url, wait_until="domcontentloaded", timeout=90_000)
-                self._scroll_page(page, self.settings.facebook_discovery_scrolls)
-                html = page.content()
+                query = quote_plus(keyword)
+                for url_template in _GROUP_SEARCH_URLS:
+                    search_url = url_template.format(query=query)
+                    page.goto(search_url, wait_until="domcontentloaded", timeout=90_000)
+                    self._ensure_authenticated(page, "group discovery")
+                    self._scroll_page(page, self.settings.facebook_discovery_scrolls)
 
-                for item in parse_group_candidates_from_html(html, discovered_keyword=keyword):
-                    score = score_group_relevance(item["name"], item["description"], keyword)
-                    if score <= 0:
-                        continue
-                    candidate = FacebookGroupCandidate(
-                        group_external_id=item["group_external_id"],
-                        name=item["name"],
-                        group_url=item["group_url"],
-                        description=item["description"],
-                        relevance_score=score,
-                        discovered_keyword=keyword,
-                        metadata={"search_url": url},
-                    )
-                    existing = deduped.get(candidate.group_external_id)
-                    if existing is None or candidate.relevance_score > existing.relevance_score:
-                        deduped[candidate.group_external_id] = candidate
+                    extracted = self._extract_group_candidates_from_page(page=page, keyword=keyword, search_url=search_url)
+                    if not extracted:
+                        html = page.content()
+                        extracted = self._extract_group_candidates_from_html(html=html, keyword=keyword, search_url=search_url)
+
+                    for candidate in extracted:
+                        existing = deduped.get(candidate.group_external_id)
+                        if existing is None or candidate.relevance_score > existing.relevance_score:
+                            deduped[candidate.group_external_id] = candidate
 
             ordered = sorted(deduped.values(), key=lambda c: c.relevance_score, reverse=True)
-            return ordered[: self.settings.facebook_discovery_max_groups]
+            limited = ordered[: self.settings.facebook_discovery_max_groups]
+            if not limited:
+                raise RuntimeError(
+                    "No groups discovered. Ensure Facebook session is logged in and set FACEBOOK_HEADLESS=false in .env.local."
+                )
+            return limited
         finally:
             context.close()
             playwright.stop()
@@ -116,6 +139,8 @@ class FacebookGroupsAdapter:
         try:
             page = context.new_page()
             page.goto(group["group_url"], wait_until="domcontentloaded", timeout=90_000)
+            self._ensure_authenticated(page, f"group crawl ({group.get('group_external_id', 'unknown')})")
+            self._ensure_group_accessible(page, group.get("group_url", ""))
 
             now = datetime.now(UTC)
             cutoff = now - timedelta(days=max(1, self.settings.facebook_crawl_days))
@@ -126,7 +151,7 @@ class FacebookGroupsAdapter:
 
             for scroll_idx in range(max_scrolls):
                 page.wait_for_timeout(1_100)
-                articles = page.locator("div[role='article']")
+                articles = self._article_locator(page)
                 try:
                     count = articles.count()
                 except PlaywrightError:
@@ -152,6 +177,102 @@ class FacebookGroupsAdapter:
         finally:
             context.close()
             playwright.stop()
+
+    def _extract_group_candidates_from_page(
+        self,
+        *,
+        page,
+        keyword: str,
+        search_url: str,
+    ) -> list[FacebookGroupCandidate]:
+        try:
+            raw_items = page.locator("a[href*='/groups/']").evaluate_all(
+                "els => els.map(el => ({ href: el.href || '', text: (el.innerText || '').trim(), aria: (el.getAttribute('aria-label') || '').trim() }))"
+            )
+        except (PlaywrightTimeoutError, PlaywrightError):
+            return []
+
+        deduped: dict[str, FacebookGroupCandidate] = {}
+        for item in raw_items:
+            href = normalize_facebook_url(str(item.get("href", "")))
+            if not self._looks_like_group_url(href):
+                continue
+
+            name = str(item.get("text") or item.get("aria") or "").strip()
+            if len(name) < 3:
+                continue
+            description = f"{name}"
+
+            score = score_group_relevance(name=name, description=description, keyword=keyword)
+            if score < 0.35:
+                continue
+
+            group_external_id = parse_group_external_id(href)
+            candidate = FacebookGroupCandidate(
+                group_external_id=group_external_id,
+                name=name,
+                group_url=href,
+                description=description,
+                relevance_score=score,
+                discovered_keyword=keyword,
+                metadata={"search_url": search_url, "extraction": "dom"},
+            )
+            existing = deduped.get(group_external_id)
+            if existing is None or candidate.relevance_score > existing.relevance_score:
+                deduped[group_external_id] = candidate
+
+        return list(deduped.values())
+
+    def _extract_group_candidates_from_html(
+        self,
+        *,
+        html: str,
+        keyword: str,
+        search_url: str,
+    ) -> list[FacebookGroupCandidate]:
+        candidates: list[FacebookGroupCandidate] = []
+        for item in parse_group_candidates_from_html(html, discovered_keyword=keyword):
+            score = score_group_relevance(item["name"], item["description"], keyword)
+            if score < 0.35:
+                continue
+            candidate = FacebookGroupCandidate(
+                group_external_id=item["group_external_id"],
+                name=item["name"],
+                group_url=item["group_url"],
+                description=item["description"],
+                relevance_score=score,
+                discovered_keyword=keyword,
+                metadata={"search_url": search_url, "extraction": "html"},
+            )
+            candidates.append(candidate)
+        return candidates
+
+    def _ensure_authenticated(self, page, action: str) -> None:
+        url = (page.url or "").lower()
+        if any(token in url for token in ["/login", "checkpoint", "recover"]):
+            raise RuntimeError(
+                f"Facebook authentication required during {action}. Run `python -m app.cli facebook-login` first."
+            )
+
+        try:
+            email_inputs = page.locator("input[name='email']").count()
+        except PlaywrightError:
+            email_inputs = 0
+        if email_inputs > 0:
+            raise RuntimeError(
+                f"Facebook session is not authenticated during {action}. Run `python -m app.cli facebook-login` first."
+            )
+
+    def _ensure_group_accessible(self, page, group_url: str) -> None:
+        try:
+            unavailable = page.get_by_text("This content isn't available right now", exact=False).count()
+            private_hint = page.get_by_text("Private group", exact=False).count()
+        except PlaywrightError:
+            unavailable = 0
+            private_hint = 0
+
+        if unavailable > 0 or private_hint > 0:
+            raise RuntimeError(f"Group is unavailable or private for this account: {group_url}")
 
     def _extract_post_from_article(
         self,
@@ -215,9 +336,10 @@ class FacebookGroupsAdapter:
             raw_links = article.locator("a").evaluate_all("els => els.map(e => e.href || '').filter(Boolean)")
         except (PlaywrightTimeoutError, PlaywrightError):
             return []
+
         links: list[str] = []
         for link in raw_links:
-            normalized = str(link).strip()
+            normalized = normalize_facebook_url(str(link).strip())
             if not normalized:
                 continue
             links.append(normalized)
@@ -288,10 +410,28 @@ class FacebookGroupsAdapter:
         except (PlaywrightTimeoutError, PlaywrightError, OSError):
             return None
 
+    def _article_locator(self, page):
+        primary = page.locator("div[role='article']")
+        try:
+            if primary.count() > 0:
+                return primary
+        except PlaywrightError:
+            pass
+        return page.locator("article")
+
     @staticmethod
     def _safe_component(value: str) -> str:
         cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
         return cleaned.strip("._") or "item"
+
+    def _looks_like_group_url(self, url: str) -> bool:
+        lowered = (url or "").lower()
+        if "facebook.com/groups/" not in lowered:
+            return False
+        if any(token in lowered for token in _GROUP_URL_EXCLUDE_TOKENS):
+            return False
+        group_id = parse_group_external_id(url)
+        return bool(group_id)
 
     @staticmethod
     def _scroll_page(page, rounds: int) -> None:

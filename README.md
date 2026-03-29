@@ -30,6 +30,7 @@ Local-first FastAPI app that aggregates:
 2. Install Playwright browser runtime once:
    - `playwright install chromium`
 3. Copy `.env.local.example` to `.env.local` and set values.
+   - Keep `FACEBOOK_HEADLESS=false` for more reliable discovery/crawling.
 4. Bootstrap Facebook login session once (opens browser):
    - `python -m app.cli facebook-login`
    - Log in with your account, then press Enter in terminal.
