@@ -5,3 +5,6 @@ __pycache__/
 data/
 .env
 .env.local
+build/
+dist/
+*.spec

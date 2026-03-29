@@ -165,6 +165,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def dashboard(
         request: Request,
+        tab: str | None = "pm",
         role: str | None = None,
         source: str | None = None,
         location: str | None = None,
@@ -203,11 +204,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         latest_run = _run_to_dict(request.app.state.db.get_latest_run())
         latest_facebook_run = _facebook_run_to_dict(request.app.state.db.get_latest_facebook_run(mode="collect"))
         latest_discovery_run = _facebook_run_to_dict(request.app.state.db.get_latest_facebook_run(mode="discovery"))
+        active_tab = "facebook" if _parse_optional_str(tab) == "facebook" else "pm"
 
         return templates.TemplateResponse(
             request,
             "dashboard.html",
             {
+                "active_tab": active_tab,
                 "jobs": jobs,
                 "latest_run": latest_run,
                 "filters": filters,

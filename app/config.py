@@ -1,11 +1,28 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 
-def _load_env_file(path: str) -> None:
+def _resolve_env_file(path: str) -> Path:
+    requested = Path(path).expanduser()
+    if requested.is_absolute():
+        return requested
+
+    candidates: list[Path] = [Path.cwd() / requested]
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / requested)
+    candidates.append(Path(__file__).resolve().parent.parent / requested)
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return candidates[0]
+
+
+def _load_env_file(path: str | Path) -> None:
     env_path = Path(path)
     if not env_path.exists() or not env_path.is_file():
         return
@@ -131,7 +148,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        _load_env_file(os.getenv("APP_ENV_FILE", ".env.local"))
+        _load_env_file(_resolve_env_file(os.getenv("APP_ENV_FILE", ".env.local")))
         return cls(
             db_path=os.getenv("DB_PATH", "./data/jobs.db"),
             app_timezone=os.getenv("APP_TIMEZONE", "Africa/Cairo"),

@@ -6,6 +6,9 @@ Local-first FastAPI app that aggregates:
 
 ## Features
 - Existing PM pipeline: role ranking, early-career scoring, dedupe, CSV export.
+- Dashboard split into 2 tabs:
+  - `PM Search` (LinkedIn/Greenhouse/Lever pipeline)
+  - `Facebook Scraper` (group discovery, approval, and remote-leads extraction)
 - Facebook discovery pipeline:
   - semi-automatic Egypt-relevant group discovery
   - pending group approval before crawling
@@ -39,6 +42,20 @@ Local-first FastAPI app that aggregates:
    - `uvicorn app.main:app --reload`
 6. Open dashboard:
    - `http://127.0.0.1:8000/`
+   - Use the `PM Search` and `Facebook Scraper` tabs to switch between pipelines.
+
+## Windows EXE (Easy Launch)
+1. From project root, build the executable:
+   - `powershell -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1`
+2. Launch:
+   - `.\dist\PMJobHunter.exe`
+3. The app opens your browser automatically at:
+   - `http://127.0.0.1:<port>/?tab=pm`
+
+Notes:
+- Put your `.env.local` next to the EXE (or run from repo root).  
+- Facebook automation still needs Playwright browsers installed once:
+  - `playwright install chromium`
 
 ## CLI Commands
 - `python -m app.cli collect`
