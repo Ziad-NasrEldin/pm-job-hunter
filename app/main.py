@@ -284,7 +284,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if app.state.scheduler is not None:
             app.state.scheduler.shutdown(wait=False)
 
-    app = FastAPI(title="PM Job Hunter", version="0.3.4", lifespan=lifespan)
+    app = FastAPI(title="PM Job Hunter", version="0.3.5", lifespan=lifespan)
     app.mount(
         "/assets/screenshots",
         StaticFiles(directory=settings.facebook_screenshots_dir),
