@@ -2,6 +2,8 @@ from pathlib import Path
 
 from app.facebook_parser import (
     normalize_facebook_url,
+    parse_imported_groups_csv_text_detailed,
+    parse_imported_groups_text_detailed,
     parse_imported_groups_text,
     parse_group_candidates_from_html,
     parse_group_external_id,
@@ -45,3 +47,30 @@ def test_parse_imported_groups_text_supports_urls_ids_and_name_pipe():
     assert parsed[0]["group_external_id"] == "1386469535434819"
     assert parsed[1]["group_external_id"] == "egypt.remote.jobs"
     assert parsed[2]["name"] == "Cairo WFH"
+
+
+def test_parse_imported_groups_text_detailed_reports_invalid_and_duplicates():
+    raw = """
+    https://www.facebook.com/groups/1386469535434819/
+    bad line
+    https://www.facebook.com/groups/1386469535434819/
+    """
+    report = parse_imported_groups_text_detailed(raw)
+    assert len(report["accepted"]) == 1
+    assert report["duplicate_in_input"] == 1
+    reasons = [item["reason"] for item in report["invalid"]]
+    assert "malformed_group_url_or_id" in reasons
+    assert "duplicate_in_input" in reasons
+
+
+def test_parse_imported_groups_csv_text_detailed():
+    csv_text = (
+        "name,url\n"
+        "Group A,https://www.facebook.com/groups/1234567890/\n"
+        "Group A duplicate,https://www.facebook.com/groups/1234567890/\n"
+        "Broken,not-a-group\n"
+    )
+    report = parse_imported_groups_csv_text_detailed(csv_text)
+    assert len(report["accepted"]) == 1
+    assert report["duplicate_in_input"] == 1
+    assert any(item["reason"] == "malformed_group_url_or_id" for item in report["invalid"])

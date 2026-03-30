@@ -146,6 +146,54 @@ class FacebookGroupsAdapter:
             browser.close()
             playwright.stop()
 
+    def validate_session(self) -> dict[str, str | bool]:
+        state_path = Path(self.settings.facebook_storage_state_path).resolve()
+        if not state_path.exists():
+            return {
+                "session_file_present": False,
+                "session_valid": False,
+                "reason": f"Session file missing at {state_path}",
+            }
+        if sync_playwright is None:
+            return {
+                "session_file_present": True,
+                "session_valid": True,
+                "reason": "Session file present (Playwright unavailable for live validation).",
+            }
+
+        try:
+            playwright, browser, context = self._open_runtime_context(headless=True)
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc).strip() or exc.__class__.__name__
+            return {
+                "session_file_present": True,
+                "session_valid": False,
+                "reason": message,
+            }
+
+        try:
+            page = context.new_page()
+            page.goto("https://www.facebook.com/me", wait_until="domcontentloaded", timeout=45_000)
+            valid = self._is_authenticated(page)
+            if valid:
+                return {"session_file_present": True, "session_valid": True, "reason": "ok"}
+            return {
+                "session_file_present": True,
+                "session_valid": False,
+                "reason": "Facebook redirected to login/checkpoint. Session expired.",
+            }
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc).strip() or exc.__class__.__name__
+            return {
+                "session_file_present": True,
+                "session_valid": False,
+                "reason": message,
+            }
+        finally:
+            context.close()
+            browser.close()
+            playwright.stop()
+
     def discover_groups(self) -> list[FacebookGroupCandidate]:
         playwright, browser, context = self._open_runtime_context(headless=self.settings.facebook_headless)
         try:

@@ -5,67 +5,346 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PM Job Hunter Dashboard</title>
     <style>
+        @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap");
+
         :root {
-            --bg: #f8fafc;
-            --panel: #ffffff;
-            --border: #e2e8f0;
-            --text: #0f172a;
-            --muted: #475569;
-            --brand: #0ea5e9;
-            --brand-dark: #0369a1;
-            --danger: #dc2626;
+            --bg: #f4efe6;
+            --bg-deep: #ece3d3;
+            --panel: rgba(255, 250, 241, 0.72);
+            --panel-strong: rgba(255, 252, 246, 0.9);
+            --border: rgba(21, 59, 73, 0.18);
+            --text: #192631;
+            --muted: #5a6974;
+            --accent: #0f5a66;
+            --accent-soft: rgba(15, 90, 102, 0.14);
+            --accent-ink: #093e48;
+            --danger: #b84134;
+            --gold-idle: #8f7a46;
+            --terminal-bg: #111a24;
+            --terminal-panel: #0f1922;
+            --terminal-border: #26414d;
+            --terminal-text: #d8e5ee;
+            --terminal-teal: #37d7c4;
         }
-        * { box-sizing: border-box; }
-        body { font-family: "Segoe UI", Tahoma, sans-serif; margin: 24px; background: var(--bg); color: var(--text); }
-        h1 { margin-bottom: 8px; }
-        h2 { margin: 0 0 8px; }
-        .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
-        .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-        form.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-        input, select, button { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
-        button { cursor: pointer; background: var(--brand); color: #fff; border: none; }
-        button.secondary { background: #334155; }
-        button.danger { background: var(--danger); }
-        button.small { padding: 5px 8px; font-size: 12px; }
-        table { width: 100%; border-collapse: collapse; background: #fff; }
-        th, td { border: 1px solid var(--border); padding: 8px; text-align: left; font-size: 13px; vertical-align: top; }
-        th { background: #f1f5f9; }
-        .muted { color: var(--muted); font-size: 13px; }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: "Manrope", sans-serif;
+            margin: 0;
+            background:
+                radial-gradient(circle at 18% 12%, rgba(67, 108, 135, 0.1), transparent 44%),
+                radial-gradient(circle at 88% 22%, rgba(143, 122, 70, 0.1), transparent 46%),
+                linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
+            color: var(--text);
+        }
+        .app-shell {
+            max-width: 1500px;
+            margin: 20px auto;
+            padding: 0 18px 20px;
+        }
+        .topbar {
+            background: var(--panel-strong);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            backdrop-filter: blur(8px);
+            padding: 18px 20px;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .eyebrow {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            color: var(--gold-idle);
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+        h1 {
+            margin: 0 0 6px;
+            font-size: 30px;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+            color: #13242d;
+        }
+        h2 {
+            margin: 0 0 10px;
+            letter-spacing: -0.01em;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(130px, 1fr));
+            gap: 8px;
+        }
+        .metric {
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.62);
+            border-radius: 14px;
+            padding: 10px 12px;
+        }
+        .metric-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            color: var(--muted);
+            margin-bottom: 4px;
+            font-weight: 700;
+        }
+        .metric-value {
+            font-size: 14px;
+            color: var(--accent-ink);
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .workspace {
+            display: grid;
+            grid-template-columns: 320px minmax(0, 1fr) 360px;
+            gap: 14px;
+            align-items: start;
+        }
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            padding: 14px;
+            margin-bottom: 14px;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        form.inline {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        input, select, textarea, button {
+            padding: 9px 11px;
+            border: 1px solid rgba(25, 54, 69, 0.25);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.83);
+            color: var(--text);
+            font-family: "Manrope", sans-serif;
+        }
+        textarea {
+            resize: vertical;
+        }
+        button {
+            cursor: pointer;
+            background: var(--accent);
+            color: #f8fbfd;
+            border: none;
+            transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+        }
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(15, 69, 78, 0.2);
+            background: #0c4a54;
+        }
+        button.secondary {
+            background: #35556c;
+        }
+        button.danger {
+            background: var(--danger);
+        }
+        button.small {
+            padding: 6px 9px;
+            font-size: 12px;
+        }
+        a {
+            color: var(--accent-ink);
+            text-decoration-color: rgba(9, 62, 72, 0.3);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: rgba(255, 255, 255, 0.66);
+            border: 1px solid rgba(31, 65, 78, 0.15);
+            border-radius: 14px;
+            overflow: hidden;
+        }
+        th, td {
+            border: 1px solid rgba(31, 65, 78, 0.12);
+            padding: 9px;
+            text-align: left;
+            font-size: 13px;
+            vertical-align: top;
+        }
+        th {
+            background: rgba(242, 247, 248, 0.85);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 10px;
+            color: #4a5c67;
+        }
+        .muted {
+            color: var(--muted);
+            font-size: 13px;
+        }
         .status { font-weight: 600; }
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-        .tag { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: 12px; background: #e2e8f0; color: #0f172a; }
-        .phones span { display: inline-block; margin-right: 6px; margin-bottom: 4px; padding: 2px 6px; background: #e0f2fe; border-radius: 999px; }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: var(--accent-soft); color: var(--accent-ink); }
+        .phones span { display: inline-block; margin-right: 6px; margin-bottom: 4px; padding: 2px 7px; background: rgba(15, 90, 102, 0.12); border-radius: 999px; }
         .thumb { max-width: 150px; max-height: 120px; border: 1px solid var(--border); border-radius: 6px; display: block; margin-bottom: 6px; }
-        .tabs { display: flex; gap: 8px; margin: 16px 0; }
-        .tab-btn { background: #e2e8f0; color: #0f172a; border: 1px solid var(--border); }
-        .tab-btn.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+        .tabs { display: flex; gap: 8px; margin: 4px 0 16px; }
+        .tab-btn { background: rgba(255, 255, 255, 0.8); color: #30424d; border: 1px solid rgba(20, 55, 68, 0.16); }
+        .tab-btn.active { background: var(--accent); color: #f5fcfe; border-color: transparent; }
         .tab-panel { display: none; }
         .tab-panel.active { display: block; }
         .status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
-        .status-card { border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; padding: 8px; font-size: 12px; }
+        .status-card { border: 1px solid var(--border); border-radius: 12px; background: rgba(255, 255, 255, 0.72); padding: 8px; font-size: 12px; }
         .status-card strong { display: block; font-size: 13px; margin-bottom: 2px; }
+        .hidden { display: none !important; }
+        .import-mode-group { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+        .import-report { margin-top: 10px; max-height: 180px; overflow: auto; }
+        .run-history-list { display: grid; gap: 8px; }
+        .run-history-item { border: 1px solid var(--border); border-radius: 10px; padding: 8px; background: rgba(255,255,255,0.74); }
+        .run-history-item .meta { font-size: 12px; color: var(--muted); }
+        .modal-backdrop { position: fixed; inset: 0; background: rgba(13, 20, 24, 0.45); display: none; align-items: center; justify-content: center; padding: 20px; z-index: 30; }
+        .modal-backdrop.open { display: flex; }
+        .modal-card { width: min(980px, 100%); max-height: 80vh; overflow: auto; background: var(--panel-strong); border: 1px solid var(--border); border-radius: 16px; padding: 14px; }
+        .lead-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+        .lead-note-input { width: 100%; min-width: 180px; }
+        .terminal-panel {
+            background: linear-gradient(180deg, var(--terminal-panel), var(--terminal-bg));
+            border: 1px solid var(--terminal-border);
+            border-radius: 20px;
+            color: var(--terminal-text);
+            padding: 12px;
+            position: sticky;
+            top: 18px;
+        }
+        .terminal-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .terminal-title {
+            font-family: "IBM Plex Mono", monospace;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            color: var(--terminal-teal);
+        }
+        .terminal-output {
+            border: 1px solid rgba(79, 123, 139, 0.42);
+            border-radius: 12px;
+            background: rgba(9, 16, 22, 0.72);
+            padding: 10px;
+            height: 340px;
+            overflow: auto;
+            font-family: "IBM Plex Mono", monospace;
+            font-size: 12px;
+            line-height: 1.55;
+            margin-bottom: 10px;
+        }
+        .terminal-line {
+            margin-bottom: 4px;
+            color: var(--terminal-text);
+        }
+        .terminal-line .cmd {
+            color: var(--terminal-teal);
+        }
+        .terminal-presets {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+        .terminal-presets button {
+            font-family: "IBM Plex Mono", monospace;
+            font-size: 11px;
+            padding: 7px 8px;
+            background: rgba(40, 82, 100, 0.82);
+        }
+        .terminal-input {
+            display: flex;
+            gap: 6px;
+        }
+        .terminal-input input {
+            flex: 1;
+            font-family: "IBM Plex Mono", monospace;
+            background: rgba(13, 25, 34, 0.75);
+            color: var(--terminal-text);
+            border: 1px solid rgba(79, 123, 139, 0.55);
+        }
+        .terminal-input button {
+            font-family: "IBM Plex Mono", monospace;
+        }
         @media (max-width: 980px) {
+            .app-shell {
+                padding: 0 10px 12px;
+                margin-top: 10px;
+            }
+            .topbar {
+                grid-template-columns: 1fr;
+            }
+            .metrics {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .workspace {
+                grid-template-columns: 1fr;
+            }
             .grid-2 { grid-template-columns: 1fr; }
             table { display: block; overflow-x: auto; }
             .status-grid { grid-template-columns: 1fr; }
+            .terminal-panel {
+                position: static;
+            }
         }
     </style>
 </head>
 <body>
-    <h1>PM Job Hunter</h1>
-    <p class="muted">Timezone: {{ timezone }} | Includes LinkedIn/Greenhouse/Lever + Facebook remote jobs (Arabic + English)</p>
+    <div class="app-shell">
+        <header class="topbar">
+            <div>
+                <div class="eyebrow">Remote Recruitment Intelligence</div>
+                <h1>PM Job Hunter</h1>
+                <p class="muted">Timezone: {{ timezone }} | PM search + Facebook remote leads (Arabic + English)</p>
+            </div>
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-label">PM Jobs</div>
+                    <div class="metric-value">{{ jobs|length }}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">FB Leads</div>
+                    <div class="metric-value">{{ facebook_posts|length }}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Tracked Groups</div>
+                    <div class="metric-value">{{ facebook_groups|length }}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Candidates</div>
+                    <div class="metric-value">{{ facebook_candidates|length }}</div>
+                </div>
+            </div>
+        </header>
+        <div class="workspace">
+            <aside>
 
     <div class="panel">
         <h2>Quick Actions</h2>
         <div class="controls">
             <button id="quickFbLoginButton" class="secondary" type="button">Facebook Login</button>
             <button id="quickFbRunButton" type="button">Run Facebook Scraper</button>
+            <button id="quickFbRetryButton" class="secondary" type="button">Retry Last Failed Run</button>
             <button id="quickFbDiscoverButton" class="secondary" type="button">Run Group Discovery</button>
             <span id="quickActionStatus" class="muted">Checking Facebook status...</span>
         </div>
         <div id="quickFbStatusGrid" class="status-grid"></div>
     </div>
 
+    </aside>
+    <main>
     <div class="tabs">
         <button id="tabBtnPm" class="tab-btn" type="button" onclick="switchTab('pm')">PM Search</button>
         <button id="tabBtnFacebook" class="tab-btn" type="button" onclick="switchTab('facebook')">Facebook Scraper</button>
@@ -186,15 +465,36 @@
         </div>
 
         <div class="panel">
+            <h2>Run History</h2>
+            <div class="controls" style="margin-bottom:8px;">
+                <button id="fbRefreshRunsButton" class="secondary" type="button">Refresh Runs</button>
+                <span id="fbRunsStatus" class="muted">Loading run history...</span>
+            </div>
+            <div id="fbRunHistoryList" class="run-history-list"></div>
+        </div>
+
+        <div class="panel">
             <h2>Import Tracked Groups</h2>
-            <p class="muted">Paste existing Facebook group URLs or group IDs (one per line). Optional format: <code>Name | URL</code>.</p>
-            <div class="controls" style="align-items:flex-start;">
+            <p class="muted">Import from Paste, CSV file, or public CSV/Google Sheets URL.</p>
+            <div class="import-mode-group">
+                <button type="button" id="fbImportModePaste" class="small">Paste</button>
+                <button type="button" id="fbImportModeCsv" class="small secondary">CSV File</button>
+                <button type="button" id="fbImportModeUrl" class="small secondary">Public URL</button>
+            </div>
+            <div id="fbImportPasteWrap" class="controls" style="align-items:flex-start;">
                 <textarea id="fbImportInput" rows="5" style="width:100%; min-height:110px;" placeholder="https://www.facebook.com/groups/1386469535434819/\nhttps://www.facebook.com/groups/another.group/\nMy Group | https://www.facebook.com/groups/1234567890/"></textarea>
+            </div>
+            <div id="fbImportCsvWrap" class="controls hidden" style="align-items:flex-start;">
+                <input id="fbImportCsvInput" type="file" accept=".csv,text/csv">
+            </div>
+            <div id="fbImportUrlWrap" class="controls hidden" style="align-items:flex-start;">
+                <input id="fbImportUrlInput" type="url" style="width:100%;" placeholder="https://docs.google.com/spreadsheets/d/... or https://example.com/groups.csv">
             </div>
             <div class="controls" style="margin-top:8px;">
                 <button id="fbImportButton" type="button">Import Tracked Groups</button>
                 <span id="fbImportStatus" class="muted"></span>
             </div>
+            <div id="fbImportReport" class="import-report muted"></div>
         </div>
 
         <div class="grid-2">
@@ -283,6 +583,11 @@
                     <option value="true" {% if facebook_filters.has_phone is true %}selected{% endif %}>With phone</option>
                     <option value="false" {% if facebook_filters.has_phone is false %}selected{% endif %}>Without phone</option>
                 </select>
+                <select name="fb_lead_status">
+                    {% for value, label in facebook_lead_status_options %}
+                    <option value="{{ value }}" {% if (facebook_filters.lead_status or 'all') == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
                 <input type="number" min="1" max="720" name="fb_new_since_hours" placeholder="hours" value="{{ facebook_filters.new_since_hours if facebook_filters.new_since_hours is not none else '' }}">
                 <button type="submit">Apply Facebook Filters</button>
             </form>
@@ -298,6 +603,7 @@
                         <th>Phones</th>
                         <th>WhatsApp</th>
                         <th>Screenshot</th>
+                        <th>Lead</th>
                         <th>Updated</th>
                     </tr>
                 </thead>
@@ -331,20 +637,94 @@
                                 -
                             {% endif %}
                         </td>
+                        <td>
+                            <span class="tag">{{ post.lead_status or 'active' }}</span>
+                            <input class="lead-note-input" type="text" id="leadNote-{{ post.dedupe_key }}" value="{{ post.lead_note or '' }}" placeholder="add note">
+                            <div class="lead-actions">
+                                <button class="small secondary" type="button" onclick="setLeadStatus('{{ post.dedupe_key }}','archived')">Archive</button>
+                                <button class="small danger" type="button" onclick="setLeadStatus('{{ post.dedupe_key }}','dismissed')">Dismiss</button>
+                                <button class="small" type="button" onclick="setLeadStatus('{{ post.dedupe_key }}','active')">Restore</button>
+                                <button class="small" type="button" onclick="saveLeadNote('{{ post.dedupe_key }}')">Save Note</button>
+                            </div>
+                        </td>
                         <td>{{ post.content_updated_at }}</td>
                     </tr>
                 {% endfor %}
                 {% if facebook_posts|length == 0 %}
-                    <tr><td colspan="7">No Facebook leads found for current filters.</td></tr>
+                    <tr><td colspan="8">No Facebook leads found for current filters.</td></tr>
                 {% endif %}
                 </tbody>
             </table>
         </div>
     </section>
 
+    </main>
+    <aside>
+        <div class="terminal-panel">
+            <div class="terminal-head">
+                <div class="terminal-title">Ops Console</div>
+            </div>
+            <div id="opsConsoleOutput" class="terminal-output"></div>
+            <div class="terminal-presets">
+                <button type="button" id="consolePresetFbRun">facebook.collect</button>
+                <button type="button" id="consolePresetFbDiscover">facebook.discover</button>
+                <button type="button" id="consolePresetPmRun">pm.collect</button>
+            </div>
+            <div class="terminal-input">
+                <input id="consoleInput" type="text" value="status.facebook" aria-label="Console command">
+                <button id="consoleRunButton" type="button">Run</button>
+            </div>
+        </div>
+    </aside>
+    </div>
+    </div>
+
+    <div id="runDetailModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Run detail modal">
+        <div class="modal-card">
+            <div class="controls" style="justify-content:space-between; margin-bottom:8px;">
+                <h2>Run Details</h2>
+                <button type="button" class="secondary" onclick="closeRunDetailModal()">Close</button>
+            </div>
+            <div id="runDetailSummary" class="muted" style="margin-bottom:8px;"></div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Stage</th>
+                        <th>Scope</th>
+                        <th>Message</th>
+                        <th>Payload</th>
+                    </tr>
+                </thead>
+                <tbody id="runDetailEventsBody"></tbody>
+            </table>
+        </div>
+    </div>
+
     <script>
         let activeTab = "{{ active_tab }}";
         let cachedFacebookStatus = null;
+        let importMode = "paste";
+
+        function appendOpsLine(message, kind = "info") {
+            const output = document.getElementById("opsConsoleOutput");
+            if (!output) return;
+            const line = document.createElement("div");
+            line.className = "terminal-line";
+            const time = new Date().toLocaleTimeString();
+            const prefix = kind === "error" ? "ERR" : (kind === "ok" ? "OK" : "LOG");
+            line.innerHTML = `<span class="cmd">[${time}] ${prefix}</span> ${message}`;
+            output.prepend(line);
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? "")
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('\"', "&quot;")
+                .replaceAll("'", "&#39;");
+        }
 
         function switchTab(tabName) {
             activeTab = tabName;
@@ -396,10 +776,11 @@
         function renderFacebookStatus(statusData) {
             const grid = document.getElementById("quickFbStatusGrid");
             const enabledText = statusData.facebook_enabled ? "Enabled" : "Disabled";
-            const sessionText = statusData.session_ready ? "Ready" : "Missing";
+            const sessionText = statusData.session_valid ? "Valid" : "Expired/Missing";
             const collectText = runLabel(statusData.latest_collect_run);
             const discoverText = runLabel(statusData.latest_discovery_run);
             const canCollectText = statusData.can_collect ? "Ready to run" : (statusData.blocking_reason || "Blocked");
+            const checkedAt = statusData.session_checked_at || "-";
 
             grid.innerHTML = `
                 <div class="status-card"><strong>Feature</strong>${enabledText}</div>
@@ -408,6 +789,7 @@
                 <div class="status-card"><strong>Collect Run</strong>${collectText}</div>
                 <div class="status-card"><strong>Discovery Run</strong>${discoverText}</div>
                 <div class="status-card"><strong>Preflight</strong>${canCollectText}</div>
+                <div class="status-card"><strong>Session Checked</strong>${checkedAt}</div>
             `;
         }
 
@@ -418,76 +800,210 @@
             return status;
         }
 
+        async function refreshFacebookRuns() {
+            const statusEl = document.getElementById("fbRunsStatus");
+            const listEl = document.getElementById("fbRunHistoryList");
+            if (!statusEl || !listEl) return;
+            statusEl.textContent = "Loading run history...";
+            try {
+                const data = await getJson("/facebook/runs?mode=collect&limit=25");
+                if (!data.items || data.items.length === 0) {
+                    statusEl.textContent = "No collect runs yet.";
+                    listEl.innerHTML = "";
+                    return;
+                }
+                listEl.innerHTML = data.items.map((run) => `
+                    <div class="run-history-item">
+                        <div><strong>#${run.run_id}</strong> <span class="tag">${escapeHtml(run.status)}</span></div>
+                        <div class="meta">started: ${escapeHtml(run.started_at || "-")} | new=${run.total_new} updated=${run.total_updated} kept=${run.total_kept}</div>
+                        <div class="controls" style="margin-top:6px;">
+                            <button class="small secondary" type="button" onclick="openRunDetail(${run.run_id})">View details</button>
+                        </div>
+                    </div>
+                `).join("");
+                statusEl.textContent = `Loaded ${data.items.length} runs.`;
+            } catch (err) {
+                statusEl.textContent = `Failed to load runs: ${err.message}`;
+            }
+        }
+
+        async function openRunDetail(runId) {
+            const modal = document.getElementById("runDetailModal");
+            const summary = document.getElementById("runDetailSummary");
+            const body = document.getElementById("runDetailEventsBody");
+            modal.classList.add("open");
+            summary.textContent = `Loading run #${runId}...`;
+            body.innerHTML = "";
+            try {
+                const [run, events] = await Promise.all([
+                    getJson(`/facebook/runs/${runId}`),
+                    getJson(`/facebook/runs/${runId}/events?limit=1000`),
+                ]);
+                summary.textContent = `Run #${run.run_id} status=${run.status} fetched=${run.total_fetched} kept=${run.total_kept} new=${run.total_new} updated=${run.total_updated}. Reason: ${run.status_reason || "-"}`;
+                body.innerHTML = (events.items || []).map((event) => `
+                    <tr>
+                        <td>${escapeHtml(event.created_at)}</td>
+                        <td>${escapeHtml(event.stage)}</td>
+                        <td>${escapeHtml(event.scope)}</td>
+                        <td>${escapeHtml(event.message)}</td>
+                        <td><pre style="white-space:pre-wrap; margin:0;">${escapeHtml(JSON.stringify(event.payload || {}, null, 2))}</pre></td>
+                    </tr>
+                `).join("");
+            } catch (err) {
+                summary.textContent = `Failed to load run details: ${err.message}`;
+            }
+        }
+
+        function closeRunDetailModal() {
+            const modal = document.getElementById("runDetailModal");
+            modal.classList.remove("open");
+        }
+
         async function approveGroup(groupId) {
             const status = document.getElementById("fbRunStatus");
             status.textContent = `Approving ${groupId}...`;
+            appendOpsLine(`Approving group ${groupId}`);
             try {
                 await postJson(`/facebook/groups/${encodeURIComponent(groupId)}/approve`);
                 status.textContent = `Approved ${groupId}.`;
+                appendOpsLine(`Approved group ${groupId}`, "ok");
                 reloadPreservingTab();
             } catch (err) {
                 status.textContent = `Approve failed: ${err.message}`;
+                appendOpsLine(`Approve failed for ${groupId}: ${err.message}`, "error");
             }
         }
 
         async function disableGroup(groupId) {
             const status = document.getElementById("fbRunStatus");
             status.textContent = `Disabling ${groupId}...`;
+            appendOpsLine(`Disabling group ${groupId}`);
             try {
                 await postJson(`/facebook/groups/${encodeURIComponent(groupId)}/disable`);
                 status.textContent = `Disabled ${groupId}.`;
+                appendOpsLine(`Disabled group ${groupId}`, "ok");
                 reloadPreservingTab();
             } catch (err) {
                 status.textContent = `Disable failed: ${err.message}`;
+                appendOpsLine(`Disable failed for ${groupId}: ${err.message}`, "error");
+            }
+        }
+
+        function setImportMode(mode) {
+            importMode = mode;
+            document.getElementById("fbImportPasteWrap").classList.toggle("hidden", mode !== "paste");
+            document.getElementById("fbImportCsvWrap").classList.toggle("hidden", mode !== "csv");
+            document.getElementById("fbImportUrlWrap").classList.toggle("hidden", mode !== "url");
+            document.getElementById("fbImportModePaste").classList.toggle("secondary", mode !== "paste");
+            document.getElementById("fbImportModeCsv").classList.toggle("secondary", mode !== "csv");
+            document.getElementById("fbImportModeUrl").classList.toggle("secondary", mode !== "url");
+        }
+
+        function renderImportReport(data) {
+            const report = document.getElementById("fbImportReport");
+            const invalidItems = data.invalid_items || [];
+            report.innerHTML = `
+                <div>Summary: imported=${data.imported || 0}, new=${data.new || 0}, updated=${data.updated || 0}, unchanged=${data.unchanged || 0}, already_tracked=${data.already_tracked || 0}, duplicate_in_input=${data.duplicate_in_input || 0}, invalid=${data.invalid || 0}</div>
+                ${invalidItems.length ? `<table><thead><tr><th>Line</th><th>Reason</th><th>Input</th></tr></thead><tbody>${invalidItems.slice(0, 100).map((item) => `<tr><td>${escapeHtml(item.line_number || "-")}</td><td>${escapeHtml(item.reason || "")}</td><td>${escapeHtml(item.line || "")}</td></tr>`).join("")}</tbody></table>` : ""}
+            `;
+        }
+
+        async function setLeadStatus(dedupeKey, leadStatus) {
+            const status = document.getElementById("fbRunStatus");
+            status.textContent = `Updating lead status (${leadStatus})...`;
+            try {
+                await fetch(`/facebook/posts/${encodeURIComponent(dedupeKey)}/status`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ lead_status: leadStatus }),
+                }).then(async (res) => {
+                    if (!res.ok) throw new Error(await res.text());
+                });
+                status.textContent = `Lead status updated to ${leadStatus}.`;
+                reloadPreservingTab();
+            } catch (err) {
+                status.textContent = `Failed to update lead status: ${err.message}`;
+            }
+        }
+
+        async function saveLeadNote(dedupeKey) {
+            const status = document.getElementById("fbRunStatus");
+            const noteInput = document.getElementById(`leadNote-${dedupeKey}`);
+            const leadNote = (noteInput?.value || "").trim();
+            status.textContent = "Saving lead note...";
+            try {
+                await fetch(`/facebook/posts/${encodeURIComponent(dedupeKey)}/note`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ lead_note: leadNote }),
+                }).then(async (res) => {
+                    if (!res.ok) throw new Error(await res.text());
+                });
+                status.textContent = "Lead note saved.";
+            } catch (err) {
+                status.textContent = `Failed to save note: ${err.message}`;
             }
         }
 
         document.getElementById("runNowButton").addEventListener("click", async () => {
             const status = document.getElementById("runStatus");
             status.textContent = "Running PM collection...";
+            appendOpsLine("Running PM collection");
             try {
                 const data = await postJson("/runs/manual");
                 status.textContent = `PM run #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                appendOpsLine(`PM run #${data.run_id} completed with status ${data.status}`, "ok");
                 reloadPreservingTab();
             } catch (err) {
                 status.textContent = `PM collection failed: ${err.message}`;
+                appendOpsLine(`PM collection failed: ${err.message}`, "error");
             }
         });
 
         document.getElementById("digestButton").addEventListener("click", async () => {
             const status = document.getElementById("runStatus");
             status.textContent = "Sending PM digest...";
+            appendOpsLine("Sending PM digest");
             try {
                 const data = await postJson("/digest/manual");
                 status.textContent = `Digest status: ${data.status} (count=${data.count ?? 0})`;
+                appendOpsLine(`Digest finished with status ${data.status}`, "ok");
             } catch (err) {
                 status.textContent = `Digest failed: ${err.message}`;
+                appendOpsLine(`Digest failed: ${err.message}`, "error");
             }
         });
 
         document.getElementById("fbDiscoverButton").addEventListener("click", async () => {
             const status = document.getElementById("fbRunStatus");
             status.textContent = "Running Facebook group discovery...";
+            appendOpsLine("Running Facebook group discovery");
             try {
                 const data = await postJson("/facebook/discovery/run");
                 status.textContent = `Discovery #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                appendOpsLine(`Discovery run #${data.run_id} finished with status ${data.status}`, "ok");
                 await refreshFacebookStatus();
                 reloadPreservingTab();
             } catch (err) {
                 status.textContent = `Discovery failed: ${err.message}`;
+                appendOpsLine(`Discovery failed: ${err.message}`, "error");
             }
         });
 
         document.getElementById("fbRunButton").addEventListener("click", async () => {
             const status = document.getElementById("fbRunStatus");
             status.textContent = "Running Facebook collection...";
+            appendOpsLine("Running Facebook collection");
             try {
                 const data = await postJson("/facebook/runs/manual");
                 status.textContent = `Facebook run #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                appendOpsLine(`Facebook collect run #${data.run_id} finished with status ${data.status}`, "ok");
                 await refreshFacebookStatus();
+                await refreshFacebookRuns();
                 reloadPreservingTab();
             } catch (err) {
                 status.textContent = `Facebook collection failed: ${err.message}`;
+                appendOpsLine(`Facebook collection failed: ${err.message}`, "error");
             }
         });
 
@@ -495,66 +1011,196 @@
             const status = document.getElementById("fbImportStatus");
             const runStatus = document.getElementById("fbRunStatus");
             const input = document.getElementById("fbImportInput");
-            const text = (input.value || "").trim();
-            if (!text) {
-                status.textContent = "Paste at least one Facebook group URL or ID.";
-                return;
-            }
-
+            const csvInput = document.getElementById("fbImportCsvInput");
+            const urlInput = document.getElementById("fbImportUrlInput");
             status.textContent = "Importing tracked groups...";
+            appendOpsLine(`Importing tracked groups via mode=${importMode}`);
             try {
-                const data = await postJson("/facebook/groups/import", { text });
-                status.textContent = `Imported ${data.imported} groups (new=${data.new}, updated=${data.updated}, unchanged=${data.unchanged}).`;
+                let data;
+                if (importMode === "csv") {
+                    const file = csvInput.files && csvInput.files[0];
+                    if (!file) {
+                        status.textContent = "Select a CSV file first.";
+                        return;
+                    }
+                    const formData = new FormData();
+                    formData.append("file", file);
+                    const res = await fetch("/facebook/groups/import.csv", { method: "POST", body: formData });
+                    if (!res.ok) throw new Error(await res.text());
+                    data = await res.json();
+                } else if (importMode === "url") {
+                    const url = (urlInput.value || "").trim();
+                    if (!url) {
+                        status.textContent = "Enter a public CSV/Google Sheets URL.";
+                        return;
+                    }
+                    data = await postJson("/facebook/groups/import.url", { url });
+                } else {
+                    const text = (input.value || "").trim();
+                    if (!text) {
+                        status.textContent = "Paste at least one Facebook group URL or ID.";
+                        appendOpsLine("Import skipped: no tracked groups were provided", "error");
+                        return;
+                    }
+                    data = await postJson("/facebook/groups/import", { text });
+                }
+
+                status.textContent = `Imported ${data.imported} groups (new=${data.new}, updated=${data.updated}, unchanged=${data.unchanged}, invalid=${data.invalid}).`;
                 runStatus.textContent = `Group import completed. Imported ${data.imported} groups.`;
+                appendOpsLine(`Imported ${data.imported} groups (new=${data.new}, updated=${data.updated})`, "ok");
+                renderImportReport(data);
                 await refreshFacebookStatus();
                 reloadPreservingTab();
             } catch (err) {
                 status.textContent = `Import failed: ${err.message}`;
+                document.getElementById("fbImportReport").textContent = "";
+                appendOpsLine(`Group import failed: ${err.message}`, "error");
             }
         });
 
         document.getElementById("quickFbRunButton").addEventListener("click", async () => {
             const actionStatus = document.getElementById("quickActionStatus");
             actionStatus.textContent = "Checking status before running Facebook scraper...";
+            appendOpsLine("Quick action: checking preflight before Facebook run");
             try {
                 const statusData = await refreshFacebookStatus();
                 if (!statusData.can_collect) {
                     actionStatus.textContent = `Cannot run Facebook scraper: ${statusData.blocking_reason || "Preflight blocked."}`;
+                    appendOpsLine(`Facebook run blocked: ${statusData.blocking_reason || "Preflight blocked"}`, "error");
                     return;
                 }
 
                 actionStatus.textContent = "Running Facebook scraper...";
-                const data = await postJson("/facebook/runs/manual");
+                const data = await postJson("/facebook/runs/manual?resume=true");
                 actionStatus.textContent = `Facebook run #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                appendOpsLine(`Quick Facebook run #${data.run_id} finished with status ${data.status}`, "ok");
                 await refreshFacebookStatus();
+                await refreshFacebookRuns();
                 reloadPreservingTab();
             } catch (err) {
                 actionStatus.textContent = `Facebook scraper failed: ${err.message}`;
+                appendOpsLine(`Quick Facebook run failed: ${err.message}`, "error");
+            }
+        });
+
+        document.getElementById("quickFbRetryButton").addEventListener("click", async () => {
+            const actionStatus = document.getElementById("quickActionStatus");
+            actionStatus.textContent = "Retrying Facebook run from latest checkpoint...";
+            appendOpsLine("Retrying latest failed Facebook run from checkpoint");
+            try {
+                const data = await postJson("/facebook/runs/manual?resume=true");
+                actionStatus.textContent = `Retry run #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                await refreshFacebookStatus();
+                await refreshFacebookRuns();
+                reloadPreservingTab();
+            } catch (err) {
+                actionStatus.textContent = `Retry failed: ${err.message}`;
+                appendOpsLine(`Retry failed: ${err.message}`, "error");
             }
         });
 
         document.getElementById("quickFbLoginButton").addEventListener("click", async () => {
             const actionStatus = document.getElementById("quickActionStatus");
             actionStatus.textContent = "Opening Facebook login. Complete login in the browser window...";
+            appendOpsLine("Starting Facebook login bootstrap");
             try {
                 const data = await postJson("/facebook/login/bootstrap");
                 actionStatus.textContent = data.message || "Facebook login completed.";
+                appendOpsLine(data.message || "Facebook login bootstrap completed", "ok");
                 await refreshFacebookStatus();
             } catch (err) {
                 actionStatus.textContent = `Facebook login failed: ${err.message}`;
+                appendOpsLine(`Facebook login failed: ${err.message}`, "error");
             }
         });
 
         document.getElementById("quickFbDiscoverButton").addEventListener("click", async () => {
             const actionStatus = document.getElementById("quickActionStatus");
             actionStatus.textContent = "Running Facebook group discovery...";
+            appendOpsLine("Quick action: running Facebook discovery");
             try {
                 const data = await postJson("/facebook/discovery/run");
                 actionStatus.textContent = `Discovery #${data.run_id}: ${data.status} (new=${data.total_new}, updated=${data.total_updated}, kept=${data.total_kept})`;
+                appendOpsLine(`Quick discovery run #${data.run_id} finished with status ${data.status}`, "ok");
                 await refreshFacebookStatus();
+                await refreshFacebookRuns();
                 reloadPreservingTab();
             } catch (err) {
                 actionStatus.textContent = `Discovery failed: ${err.message}`;
+                appendOpsLine(`Quick discovery failed: ${err.message}`, "error");
+            }
+        });
+
+        document.getElementById("fbRefreshRunsButton").addEventListener("click", async () => {
+            await refreshFacebookRuns();
+        });
+
+        document.getElementById("fbImportModePaste").addEventListener("click", () => setImportMode("paste"));
+        document.getElementById("fbImportModeCsv").addEventListener("click", () => setImportMode("csv"));
+        document.getElementById("fbImportModeUrl").addEventListener("click", () => setImportMode("url"));
+
+        document.getElementById("runDetailModal").addEventListener("click", (event) => {
+            if (event.target.id === "runDetailModal") {
+                closeRunDetailModal();
+            }
+        });
+
+        document.getElementById("consolePresetFbRun").addEventListener("click", () => {
+            document.getElementById("consoleInput").value = "facebook.collect";
+            document.getElementById("quickFbRunButton").click();
+        });
+
+        document.getElementById("consolePresetFbDiscover").addEventListener("click", () => {
+            document.getElementById("consoleInput").value = "facebook.discover";
+            document.getElementById("quickFbDiscoverButton").click();
+        });
+
+        document.getElementById("consolePresetPmRun").addEventListener("click", () => {
+            document.getElementById("consoleInput").value = "pm.collect";
+            document.getElementById("runNowButton").click();
+        });
+
+        document.getElementById("consoleRunButton").addEventListener("click", async () => {
+            const cmdRaw = (document.getElementById("consoleInput").value || "").trim();
+            const cmd = cmdRaw.toLowerCase();
+            if (!cmd) {
+                appendOpsLine("Console command is empty", "error");
+                return;
+            }
+            if (cmd === "facebook.collect") {
+                document.getElementById("quickFbRunButton").click();
+                return;
+            }
+            if (cmd === "facebook.discover") {
+                document.getElementById("quickFbDiscoverButton").click();
+                return;
+            }
+            if (cmd === "facebook.login") {
+                document.getElementById("quickFbLoginButton").click();
+                return;
+            }
+            if (cmd === "pm.collect") {
+                document.getElementById("runNowButton").click();
+                return;
+            }
+            if (cmd === "status.facebook") {
+                appendOpsLine("Refreshing Facebook status");
+                try {
+                    const statusData = await refreshFacebookStatus();
+                    appendOpsLine(`facebook_enabled=${statusData.facebook_enabled}, session_ready=${statusData.session_ready}, approved_groups=${statusData.approved_groups_count}`, "ok");
+                } catch (err) {
+                    appendOpsLine(`Status refresh failed: ${err.message}`, "error");
+                }
+                return;
+            }
+
+            appendOpsLine(`Unknown command: ${cmdRaw}`, "error");
+        });
+
+        document.getElementById("consoleInput").addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                document.getElementById("consoleRunButton").click();
             }
         });
 
@@ -562,13 +1208,20 @@
             const actionStatus = document.getElementById("quickActionStatus");
             if (statusData.can_collect) {
                 actionStatus.textContent = "Facebook scraper is ready to run.";
+                appendOpsLine("Facebook scraper is ready to run", "ok");
             } else {
                 actionStatus.textContent = `Facebook scraper blocked: ${statusData.blocking_reason || "Preflight failed."}`;
+                appendOpsLine(`Facebook scraper blocked: ${statusData.blocking_reason || "Preflight failed"}`, "error");
             }
         }).catch((err) => {
             document.getElementById("quickActionStatus").textContent = `Failed to load Facebook status: ${err.message}`;
+            appendOpsLine(`Failed to load initial Facebook status: ${err.message}`, "error");
         });
 
+        setImportMode("paste");
+        refreshFacebookRuns().catch((err) => {
+            document.getElementById("fbRunsStatus").textContent = `Failed to load runs: ${err.message}`;
+        });
         switchTab(activeTab === "facebook" ? "facebook" : "pm");
     </script>
 </body>

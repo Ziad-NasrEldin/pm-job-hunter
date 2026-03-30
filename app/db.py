@@ -11,6 +11,7 @@ from typing import Any
 from app.models import (
     DigestItem,
     FacebookGroupCandidate,
+    FacebookRunEvent,
     FacebookPost,
     FacebookRunSummary,
     RunSummary,
@@ -118,6 +119,23 @@ class Database:
                     total_updated INTEGER NOT NULL DEFAULT 0,
                     errors_json TEXT NOT NULL DEFAULT '[]'
                 );
+                CREATE TABLE IF NOT EXISTS facebook_run_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    stage TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS facebook_run_checkpoints (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    mode TEXT NOT NULL,
+                    last_success_group_id TEXT,
+                    next_group_index INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS facebook_group_candidates (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     group_external_id TEXT NOT NULL UNIQUE,
@@ -165,7 +183,10 @@ class Database:
                     last_seen_at TEXT NOT NULL,
                     content_updated_at TEXT NOT NULL,
                     content_hash TEXT NOT NULL,
-                    is_active INTEGER NOT NULL DEFAULT 1
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    lead_status TEXT NOT NULL DEFAULT 'active',
+                    lead_note TEXT NOT NULL DEFAULT '',
+                    reviewed_at TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_jobs_role ON jobs(role_priority DESC, early_career_score DESC);
                 CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(content_updated_at DESC);
@@ -173,9 +194,22 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_facebook_groups_active ON facebook_groups(is_active, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_facebook_posts_updated ON facebook_posts(content_updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_facebook_posts_group ON facebook_posts(group_external_id, content_updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_facebook_posts_lead_status ON facebook_posts(lead_status, content_updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_facebook_run_events_run_id ON facebook_run_events(run_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_facebook_run_checkpoints_mode ON facebook_run_checkpoints(mode, updated_at DESC);
                 """
             )
+            self._ensure_facebook_schema(conn)
             conn.commit()
+
+    def _ensure_facebook_schema(self, conn: sqlite3.Connection) -> None:
+        facebook_posts_cols = {row["name"] for row in conn.execute("PRAGMA table_info(facebook_posts)").fetchall()}
+        if "lead_status" not in facebook_posts_cols:
+            conn.execute("ALTER TABLE facebook_posts ADD COLUMN lead_status TEXT NOT NULL DEFAULT 'active'")
+        if "lead_note" not in facebook_posts_cols:
+            conn.execute("ALTER TABLE facebook_posts ADD COLUMN lead_note TEXT NOT NULL DEFAULT ''")
+        if "reviewed_at" not in facebook_posts_cols:
+            conn.execute("ALTER TABLE facebook_posts ADD COLUMN reviewed_at TEXT")
 
     def create_run(self, started_at: datetime) -> int:
         with self._lock, self.connect() as conn:
@@ -433,6 +467,142 @@ class Database:
             total_updated=row["total_updated"],
             errors=json.loads(row["errors_json"] or "[]"),
         )
+
+    def list_facebook_runs(self, mode: str | None = None, limit: int = 50) -> list[FacebookRunSummary]:
+        query = "SELECT * FROM facebook_runs"
+        params: list[Any] = []
+        if mode:
+            query += " WHERE mode = ?"
+            params.append(mode)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        items: list[FacebookRunSummary] = []
+        for row in rows:
+            items.append(
+                FacebookRunSummary(
+                    run_id=row["id"],
+                    mode=row["mode"],
+                    started_at=_parse(row["started_at"]) or _utcnow(),
+                    finished_at=_parse(row["finished_at"]),
+                    status=row["status"],
+                    total_fetched=row["total_fetched"],
+                    total_kept=row["total_kept"],
+                    total_new=row["total_new"],
+                    total_updated=row["total_updated"],
+                    errors=json.loads(row["errors_json"] or "[]"),
+                )
+            )
+        return items
+
+    def get_facebook_run(self, run_id: int) -> FacebookRunSummary | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM facebook_runs WHERE id = ?", (run_id,)).fetchone()
+        if row is None:
+            return None
+        return FacebookRunSummary(
+            run_id=row["id"],
+            mode=row["mode"],
+            started_at=_parse(row["started_at"]) or _utcnow(),
+            finished_at=_parse(row["finished_at"]),
+            status=row["status"],
+            total_fetched=row["total_fetched"],
+            total_kept=row["total_kept"],
+            total_new=row["total_new"],
+            total_updated=row["total_updated"],
+            errors=json.loads(row["errors_json"] or "[]"),
+        )
+
+    def add_facebook_run_event(
+        self,
+        *,
+        run_id: int,
+        stage: str,
+        scope: str,
+        message: str,
+        payload: dict[str, Any] | None = None,
+        created_at: datetime | None = None,
+    ) -> None:
+        created_at = created_at or _utcnow()
+        with self._lock, self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO facebook_run_events(run_id, stage, scope, message, payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    stage,
+                    scope,
+                    message,
+                    json.dumps(payload or {}),
+                    _iso(created_at),
+                ),
+            )
+            conn.commit()
+
+    def list_facebook_run_events(self, run_id: int, limit: int = 500) -> list[FacebookRunEvent]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM facebook_run_events
+                WHERE run_id = ?
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (run_id, limit),
+            ).fetchall()
+        events: list[FacebookRunEvent] = []
+        for row in rows:
+            events.append(
+                FacebookRunEvent(
+                    event_id=row["id"],
+                    run_id=row["run_id"],
+                    stage=row["stage"],
+                    scope=row["scope"],
+                    message=row["message"],
+                    payload=json.loads(row["payload_json"] or "{}"),
+                    created_at=_parse(row["created_at"]) or _utcnow(),
+                )
+            )
+        return events
+
+    def save_facebook_run_checkpoint(
+        self,
+        *,
+        run_id: int,
+        mode: str,
+        last_success_group_id: str | None,
+        next_group_index: int,
+        updated_at: datetime | None = None,
+    ) -> None:
+        updated_at = updated_at or _utcnow()
+        with self._lock, self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO facebook_run_checkpoints(run_id, mode, last_success_group_id, next_group_index, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (run_id, mode, last_success_group_id, max(0, next_group_index), _iso(updated_at)),
+            )
+            conn.commit()
+
+    def get_latest_resumable_checkpoint(self, mode: str = "collect") -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT c.run_id, c.mode, c.last_success_group_id, c.next_group_index, c.updated_at
+                FROM facebook_run_checkpoints c
+                JOIN facebook_runs r ON r.id = c.run_id
+                WHERE c.mode = ? AND r.status IN ('failed', 'partial_failed')
+                ORDER BY c.id DESC
+                LIMIT 1
+                """,
+                (mode,),
+            ).fetchone()
+        return dict(row) if row else None
 
     def upsert_facebook_group_candidate(
         self, candidate: FacebookGroupCandidate, now: datetime | None = None
@@ -755,6 +925,14 @@ class Database:
             groups.append(obj)
         return groups
 
+    def is_facebook_group_tracked(self, group_external_id: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM facebook_groups WHERE group_external_id = ? LIMIT 1",
+                (group_external_id,),
+            ).fetchone()
+        return row is not None
+
     def touch_facebook_group_crawled(self, group_external_id: str, when: datetime | None = None) -> None:
         when = when or _utcnow()
         when_iso = _iso(when)
@@ -811,9 +989,9 @@ class Database:
                         post_text, post_excerpt, posted_at, category_tag, is_remote,
                         phone_numbers_json, whatsapp_links_json, screenshot_path, raw_snapshot_path,
                         metadata_json, dedupe_key, first_seen_at, last_seen_at, content_updated_at,
-                        content_hash, is_active
+                        content_hash, is_active, lead_status, lead_note, reviewed_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', '', NULL)
                     """,
                     (
                         post.group_external_id,
@@ -885,6 +1063,7 @@ class Database:
         group: str | None = None,
         category: str | None = None,
         has_phone: bool | None = None,
+        lead_status: str | None = "active",
         new_since_hours: int | None = None,
         limit: int = 200,
     ) -> list[dict[str, Any]]:
@@ -901,6 +1080,9 @@ class Database:
                 where.append("phone_numbers_json != '[]'")
             else:
                 where.append("phone_numbers_json = '[]'")
+        if lead_status:
+            where.append("lead_status = ?")
+            values.append(lead_status)
         if new_since_hours is not None:
             cutoff = _iso(_utcnow() - timedelta(hours=new_since_hours))
             where.append("content_updated_at >= ?")
@@ -928,6 +1110,46 @@ class Database:
             obj["metadata"] = json.loads(obj.pop("metadata_json", "{}") or "{}")
             items.append(obj)
         return items
+
+    def update_facebook_post_status(
+        self,
+        *,
+        dedupe_key: str,
+        lead_status: str,
+        reviewed_at: datetime | None = None,
+    ) -> bool:
+        reviewed_at = reviewed_at or _utcnow()
+        with self._lock, self.connect() as conn:
+            rowcount = conn.execute(
+                """
+                UPDATE facebook_posts
+                SET lead_status = ?, reviewed_at = ?
+                WHERE dedupe_key = ?
+                """,
+                (lead_status, _iso(reviewed_at), dedupe_key),
+            ).rowcount
+            conn.commit()
+            return rowcount > 0
+
+    def update_facebook_post_note(
+        self,
+        *,
+        dedupe_key: str,
+        lead_note: str,
+        reviewed_at: datetime | None = None,
+    ) -> bool:
+        reviewed_at = reviewed_at or _utcnow()
+        with self._lock, self.connect() as conn:
+            rowcount = conn.execute(
+                """
+                UPDATE facebook_posts
+                SET lead_note = ?, reviewed_at = ?
+                WHERE dedupe_key = ?
+                """,
+                ((lead_note or "").strip(), _iso(reviewed_at), dedupe_key),
+            ).rowcount
+            conn.commit()
+            return rowcount > 0
 
     def prune_facebook_posts(self, retention_days: int) -> list[dict[str, str]]:
         cutoff = _iso(_utcnow() - timedelta(days=retention_days))

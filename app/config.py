@@ -196,6 +196,9 @@ class Settings:
     facebook_login_timeout_seconds: int = 600
     facebook_screenshots_dir: str = "./data/screenshots/facebook"
     facebook_raw_dir: str = "./data/raw/facebook"
+    facebook_alerts_enabled: bool = True
+    facebook_alert_email_enabled: bool = True
+    facebook_alert_email_to: str | None = None
     playwright_browsers_path: str | None = None
 
     @classmethod
@@ -329,6 +332,9 @@ class Settings:
             facebook_login_timeout_seconds=_get_int("FACEBOOK_LOGIN_TIMEOUT_SECONDS", 600),
             facebook_screenshots_dir=facebook_screenshots_dir_value,
             facebook_raw_dir=facebook_raw_dir_value,
+            facebook_alerts_enabled=_get_bool("FACEBOOK_ALERTS_ENABLED", True),
+            facebook_alert_email_enabled=_get_bool("FACEBOOK_ALERT_EMAIL_ENABLED", True),
+            facebook_alert_email_to=os.getenv("FACEBOOK_ALERT_EMAIL_TO"),
             playwright_browsers_path=playwright_browsers_path or None,
         )
 

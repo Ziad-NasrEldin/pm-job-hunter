@@ -135,3 +135,14 @@ class FacebookRunSummary:
     total_new: int
     total_updated: int
     errors: list[str]
+
+
+@dataclass(slots=True)
+class FacebookRunEvent:
+    event_id: int
+    run_id: int
+    stage: str
+    scope: str
+    message: str
+    payload: dict[str, Any]
+    created_at: datetime

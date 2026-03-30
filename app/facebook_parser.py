@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 import re
 from hashlib import sha1
+from io import StringIO
 from urllib.parse import parse_qs, unquote, urlparse
 
 from bs4 import BeautifulSoup
@@ -136,12 +138,77 @@ def parse_posts_from_html(html: str) -> list[dict]:
     return posts
 
 
-def parse_imported_groups_text(raw_text: str) -> list[dict]:
-    lines = [line.strip() for line in (raw_text or "").splitlines()]
+def _parse_import_token(*, line: str, value: str, name_hint: str, line_number: int) -> tuple[dict | None, str | None]:
+    token_source = value or line
+    url_match = _GROUP_URL_RE.search(token_source) or _GROUP_URL_RE.search(line)
+    if url_match:
+        group_url = normalize_facebook_url(url_match.group(0).rstrip(".,;"))
+        group_external_id = parse_group_external_id(group_url)
+        return (
+            {
+                "line_number": line_number,
+                "group_external_id": group_external_id,
+                "group_url": group_url,
+                "name": name_hint or group_external_id,
+                "description": f"Imported from user list ({line[:120]})",
+            },
+            None,
+        )
+
+    token = value.strip().strip(".,;")
+    if not token:
+        return None, "empty_line"
+    if not _GROUP_ID_RE.match(token):
+        return None, "malformed_group_url_or_id"
+
+    group_external_id = token
+    return (
+        {
+            "line_number": line_number,
+            "group_external_id": group_external_id,
+            "group_url": f"https://www.facebook.com/groups/{group_external_id}/",
+            "name": name_hint or group_external_id,
+            "description": "Imported from user list (id)",
+        },
+        None,
+    )
+
+
+def _finalize_import_items(candidates: list[dict], invalid: list[dict]) -> dict:
     items: list[dict] = []
     seen_ids: set[str] = set()
 
-    for line in lines:
+    for candidate in candidates:
+        group_external_id = candidate["group_external_id"]
+        if group_external_id in seen_ids:
+            invalid.append(
+                {
+                    "line_number": candidate["line_number"],
+                    "line": candidate.get("raw_line", ""),
+                    "reason": "duplicate_in_input",
+                    "group_external_id": group_external_id,
+                }
+            )
+            continue
+
+        seen_ids.add(group_external_id)
+        candidate.pop("raw_line", None)
+        items.append(candidate)
+
+    return {
+        "accepted": items,
+        "invalid": invalid,
+        "duplicate_in_input": sum(1 for item in invalid if item.get("reason") == "duplicate_in_input"),
+    }
+
+
+def parse_imported_groups_text_detailed(raw_text: str) -> dict:
+    lines = [line for line in (raw_text or "").splitlines()]
+    candidates: list[dict] = []
+    invalid: list[dict] = []
+
+    for index, original in enumerate(lines, start=1):
+        line = original.strip()
         if not line:
             continue
 
@@ -152,38 +219,67 @@ def parse_imported_groups_text(raw_text: str) -> list[dict]:
             name_hint = left.strip()
             value = right.strip()
 
-        url_match = _GROUP_URL_RE.search(value) or _GROUP_URL_RE.search(line)
-        if url_match:
-            group_url = normalize_facebook_url(url_match.group(0).rstrip(".,;"))
-            group_external_id = parse_group_external_id(group_url)
-            if group_external_id in seen_ids:
-                continue
-            seen_ids.add(group_external_id)
-            items.append(
+        parsed, reason = _parse_import_token(line=line, value=value, name_hint=name_hint, line_number=index)
+        if parsed is None:
+            invalid.append(
                 {
-                    "group_external_id": group_external_id,
-                    "group_url": group_url,
-                    "name": name_hint or group_external_id,
-                    "description": f"Imported from user list ({line[:120]})",
+                    "line_number": index,
+                    "line": original,
+                    "reason": reason or "invalid",
                 }
             )
             continue
 
-        token = value.strip().strip(".,;")
-        if not _GROUP_ID_RE.match(token):
+        parsed["raw_line"] = original
+        candidates.append(parsed)
+
+    return _finalize_import_items(candidates, invalid)
+
+
+def parse_imported_groups_csv_text_detailed(csv_text: str) -> dict:
+    content = (csv_text or "").strip()
+    if not content:
+        return {"accepted": [], "invalid": [], "duplicate_in_input": 0}
+
+    reader = csv.DictReader(StringIO(content))
+    candidates: list[dict] = []
+    invalid: list[dict] = []
+
+    if not reader.fieldnames:
+        return {"accepted": [], "invalid": [], "duplicate_in_input": 0}
+
+    normalized_headers = {header.lower().strip(): header for header in reader.fieldnames if header}
+
+    def col(*names: str) -> str:
+        for name in names:
+            if name in normalized_headers:
+                return normalized_headers[name]
+        return ""
+
+    name_col = col("name", "group_name")
+    url_col = col("url", "group_url", "link")
+    id_col = col("id", "group_id", "group_external_id")
+
+    for idx, row in enumerate(reader, start=2):
+        raw_name = (row.get(name_col, "") if name_col else "").strip()
+        raw_url = (row.get(url_col, "") if url_col else "").strip()
+        raw_id = (row.get(id_col, "") if id_col else "").strip()
+        source_value = raw_url or raw_id
+
+        if not source_value:
+            invalid.append({"line_number": idx, "line": str(row), "reason": "malformed_group_url_or_id"})
             continue
 
-        group_external_id = token
-        if group_external_id in seen_ids:
+        parsed, reason = _parse_import_token(line=source_value, value=source_value, name_hint=raw_name, line_number=idx)
+        if parsed is None:
+            invalid.append({"line_number": idx, "line": str(row), "reason": reason or "invalid"})
             continue
-        seen_ids.add(group_external_id)
-        items.append(
-            {
-                "group_external_id": group_external_id,
-                "group_url": f"https://www.facebook.com/groups/{group_external_id}/",
-                "name": name_hint or group_external_id,
-                "description": "Imported from user list (id)",
-            }
-        )
 
-    return items
+        parsed["raw_line"] = str(row)
+        candidates.append(parsed)
+
+    return _finalize_import_items(candidates, invalid)
+
+
+def parse_imported_groups_text(raw_text: str) -> list[dict]:
+    return parse_imported_groups_text_detailed(raw_text).get("accepted", [])

@@ -6,7 +6,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+import httpx
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -16,13 +17,29 @@ from app.collector import JobCollector
 from app.config import Settings
 from app.db import Database
 from app.digest import DigestService
+from app.facebook_alerts import FacebookAlertService
 from app.facebook_collector import FacebookCollector
-from app.facebook_parser import parse_imported_groups_text
+from app.facebook_parser import (
+    parse_imported_groups_csv_text_detailed,
+    parse_imported_groups_text_detailed,
+)
 from app.scheduler import build_scheduler
 
 
 class FacebookGroupImportPayload(BaseModel):
     text: str = Field(default="", description="Multi-line group list (URLs/IDs)")
+
+
+class FacebookGroupImportUrlPayload(BaseModel):
+    url: str = Field(default="", description="Public CSV or Google Sheets URL")
+
+
+class FacebookPostStatusPayload(BaseModel):
+    lead_status: str = Field(description="active | archived | dismissed")
+
+
+class FacebookPostNotePayload(BaseModel):
+    lead_note: str = Field(default="", description="Manual note for this lead")
 
 
 def _run_to_dict(run) -> dict[str, Any] | None:
@@ -135,12 +152,82 @@ def _parse_optional_int(value: str | None, minimum: int, maximum: int) -> int | 
     return parsed
 
 
+def _google_sheet_to_csv_url(raw_url: str) -> str:
+    cleaned = (raw_url or "").strip()
+    if "docs.google.com/spreadsheets/d/" not in cleaned:
+        return cleaned
+
+    parts = cleaned.split("/d/", 1)
+    if len(parts) < 2:
+        return cleaned
+    doc_id = parts[1].split("/", 1)[0]
+    if not doc_id:
+        return cleaned
+
+    gid = "0"
+    if "gid=" in cleaned:
+        gid = cleaned.split("gid=", 1)[1].split("&", 1)[0] or "0"
+    return f"https://docs.google.com/spreadsheets/d/{doc_id}/export?format=csv&gid={gid}"
+
+
+def _import_groups_from_report(db: Database, report: dict[str, Any], source: str) -> dict[str, Any]:
+    accepted_items = report.get("accepted", [])
+    invalid = report.get("invalid", [])
+    duplicate_in_input = int(report.get("duplicate_in_input", 0))
+    counters = {
+        "new": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "already_tracked": 0,
+    }
+    imported_items: list[dict[str, Any]] = []
+
+    for item in accepted_items:
+        already_tracked = db.is_facebook_group_tracked(item["group_external_id"])
+        outcome = db.import_facebook_group(
+            group_external_id=item["group_external_id"],
+            name=item["name"],
+            group_url=item["group_url"],
+            description=item["description"],
+            metadata={"source": source, "line_number": item.get("line_number")},
+        )
+        counters[outcome] = counters.get(outcome, 0) + 1
+        if already_tracked:
+            counters["already_tracked"] += 1
+        imported_items.append(
+            {
+                "group_external_id": item["group_external_id"],
+                "name": item["name"],
+                "group_url": item["group_url"],
+                "outcome": outcome,
+                "already_tracked": already_tracked,
+            }
+        )
+
+    return {
+        "status": "success" if imported_items else "empty",
+        "imported": len(imported_items),
+        "new": counters.get("new", 0),
+        "updated": counters.get("updated", 0),
+        "unchanged": counters.get("unchanged", 0),
+        "already_tracked": counters.get("already_tracked", 0),
+        "duplicate_in_input": duplicate_in_input,
+        "invalid": len(invalid),
+        "invalid_items": invalid,
+        "items": imported_items,
+    }
+
+
 def _build_facebook_status(
     *,
     settings: Settings,
     db: Database,
+    collector: FacebookCollector,
 ) -> dict[str, Any]:
-    session_ready = Path(settings.facebook_storage_state_path).exists()
+    session_report = collector.check_session_status()
+    session_file_present = bool(session_report.get("session_file_present"))
+    session_valid = bool(session_report.get("session_valid"))
+    session_checked_at = session_report.get("session_checked_at")
     approved_groups_count = len(db.list_facebook_groups(active_only=True, limit=10_000))
     latest_collect_run = _facebook_run_to_dict(db.get_latest_facebook_run(mode="collect"))
     latest_discovery_run = _facebook_run_to_dict(db.get_latest_facebook_run(mode="discovery"))
@@ -148,14 +235,19 @@ def _build_facebook_status(
     blocking_reason: str | None = None
     if not settings.facebook_enabled:
         blocking_reason = "Facebook scraping is disabled in configuration."
-    elif not session_ready:
-        blocking_reason = "Facebook login session not found. Run facebook-login first."
+    elif not session_file_present:
+        blocking_reason = "Facebook login session not found. Run Facebook Login first."
+    elif not session_valid:
+        blocking_reason = "Facebook session expired or invalid. Re-login from dashboard quick actions."
     elif approved_groups_count == 0:
         blocking_reason = "No approved active Facebook groups. Approve groups first."
 
     return {
         "facebook_enabled": settings.facebook_enabled,
-        "session_ready": session_ready,
+        "session_ready": session_valid,
+        "session_file_present": session_file_present,
+        "session_valid": session_valid,
+        "session_checked_at": session_checked_at,
         "approved_groups_count": approved_groups_count,
         "latest_collect_run": latest_collect_run,
         "latest_discovery_run": latest_discovery_run,
@@ -174,12 +266,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db = Database(settings.db_path)
         db.init()
         collector = JobCollector(settings, db)
-        facebook_collector = FacebookCollector(settings, db)
+        facebook_alerts = FacebookAlertService(settings)
+        facebook_collector = FacebookCollector(settings, db, alert_service=facebook_alerts)
         digest_service = DigestService(settings, db)
         app.state.settings = settings
         app.state.db = db
         app.state.collector = collector
         app.state.facebook_collector = facebook_collector
+        app.state.facebook_alerts = facebook_alerts
         app.state.digest_service = digest_service
         app.state.scheduler = None
         if settings.enable_scheduler:
@@ -190,7 +284,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if app.state.scheduler is not None:
             app.state.scheduler.shutdown(wait=False)
 
-    app = FastAPI(title="PM Job Hunter", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="PM Job Hunter", version="0.3.3", lifespan=lifespan)
     app.mount(
         "/assets/screenshots",
         StaticFiles(directory=settings.facebook_screenshots_dir),
@@ -210,6 +304,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         fb_group: str | None = None,
         fb_category: str | None = None,
         fb_has_phone: str | None = None,
+        fb_lead_status: str | None = "active",
         fb_new_since_hours: str | None = "24",
     ):
         parsed_early_career = _parse_optional_bool(early_career)
@@ -230,6 +325,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             has_phone=_parse_optional_bool(fb_has_phone),
             new_since_hours=_parse_optional_int(fb_new_since_hours, minimum=1, maximum=720),
         )
+        parsed_lead_status = _parse_optional_str(fb_lead_status) or "active"
+        facebook_filters["lead_status"] = None if parsed_lead_status == "all" else parsed_lead_status
 
         jobs = request.app.state.db.list_jobs(**filters, limit=300)
         facebook_posts = request.app.state.db.list_facebook_posts(**facebook_filters, limit=300)
@@ -304,6 +401,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     ("customer_support", "Customer Support"),
                     ("data_entry", "Data Entry"),
                     ("other_remote_job", "Other Remote Jobs"),
+                ],
+                "facebook_lead_status_options": [
+                    ("active", "Active"),
+                    ("archived", "Archived"),
+                    ("dismissed", "Dismissed"),
+                    ("all", "All statuses"),
                 ],
             },
         )
@@ -425,6 +528,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _build_facebook_status(
             settings=request.app.state.settings,
             db=request.app.state.db,
+            collector=request.app.state.facebook_collector,
         )
 
     @app.post("/facebook/groups/{group_id}/approve")
@@ -443,56 +547,108 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/facebook/groups/import")
     def import_facebook_groups(request: Request, payload: FacebookGroupImportPayload):
-        parsed_items = parse_imported_groups_text(payload.text)
-        if not parsed_items:
+        report = parse_imported_groups_text_detailed(payload.text)
+        result = _import_groups_from_report(request.app.state.db, report, source="manual_import_text")
+        if result["imported"] == 0:
             return JSONResponse(
                 {
                     "status": "empty",
                     "message": "No valid Facebook group links or IDs found in import text.",
                     "total_lines": len([line for line in payload.text.splitlines() if line.strip()]),
-                    "imported": 0,
-                    "new": 0,
-                    "updated": 0,
-                    "unchanged": 0,
+                    **result,
+                },
+                status_code=400,
+            )
+        return JSONResponse(result)
+
+    @app.post("/facebook/groups/import.csv")
+    async def import_facebook_groups_csv(request: Request, file: UploadFile = File(...)):
+        content = (await file.read()).decode("utf-8", errors="replace")
+        report = parse_imported_groups_csv_text_detailed(content)
+        result = _import_groups_from_report(request.app.state.db, report, source="manual_import_csv")
+        if result["imported"] == 0:
+            return JSONResponse(
+                {
+                    "status": "empty",
+                    "message": "No valid groups found in CSV file.",
+                    **result,
+                },
+                status_code=400,
+            )
+        return JSONResponse(result)
+
+    @app.post("/facebook/groups/import.url")
+    def import_facebook_groups_url(request: Request, payload: FacebookGroupImportUrlPayload):
+        raw_url = payload.url.strip()
+        if not raw_url:
+            return JSONResponse({"status": "empty", "message": "Import URL is required."}, status_code=400)
+
+        fetch_url = _google_sheet_to_csv_url(raw_url)
+        try:
+            with httpx.Client(timeout=request.app.state.settings.request_timeout_seconds) as client:
+                response = client.get(fetch_url)
+                response.raise_for_status()
+                csv_text = response.text
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse(
+                {
+                    "status": "failed",
+                    "message": f"Unable to fetch import URL: {str(exc).strip() or exc.__class__.__name__}",
                 },
                 status_code=400,
             )
 
-        counters = {"new": 0, "updated": 0, "unchanged": 0}
-        imported_items: list[dict[str, str]] = []
-        for item in parsed_items:
-            outcome = request.app.state.db.import_facebook_group(
-                group_external_id=item["group_external_id"],
-                name=item["name"],
-                group_url=item["group_url"],
-                description=item["description"],
-                metadata={"source": "manual_import", "raw": item["description"]},
-            )
-            counters[outcome] = counters.get(outcome, 0) + 1
-            imported_items.append(
+        report = parse_imported_groups_csv_text_detailed(csv_text)
+        result = _import_groups_from_report(request.app.state.db, report, source="manual_import_url")
+        if result["imported"] == 0:
+            return JSONResponse(
                 {
-                    "group_external_id": item["group_external_id"],
-                    "name": item["name"],
-                    "group_url": item["group_url"],
-                    "outcome": outcome,
-                }
+                    "status": "empty",
+                    "message": "No valid groups found at import URL.",
+                    **result,
+                },
+                status_code=400,
             )
-
-        return JSONResponse(
-            {
-                "status": "success",
-                "imported": len(imported_items),
-                "new": counters.get("new", 0),
-                "updated": counters.get("updated", 0),
-                "unchanged": counters.get("unchanged", 0),
-                "items": imported_items,
-            }
-        )
+        return JSONResponse(result)
 
     @app.post("/facebook/runs/manual")
-    def facebook_collect_manual(request: Request):
-        run = request.app.state.facebook_collector.run_once()
+    def facebook_collect_manual(request: Request, resume: bool = True):
+        run = request.app.state.facebook_collector.run_once(resume=resume)
         return JSONResponse(_facebook_run_to_dict(run))
+
+    @app.get("/facebook/runs")
+    def facebook_runs(request: Request, mode: str | None = "collect", limit: int = 50):
+        parsed_mode = _parse_optional_str(mode)
+        runs = request.app.state.db.list_facebook_runs(mode=parsed_mode, limit=max(1, min(limit, 500)))
+        return {"count": len(runs), "items": [_facebook_run_to_dict(run) for run in runs]}
+
+    @app.get("/facebook/runs/{run_id}")
+    def facebook_run_detail(request: Request, run_id: int):
+        run = request.app.state.db.get_facebook_run(run_id)
+        if run is None:
+            return JSONResponse({"message": "facebook run not found"}, status_code=404)
+        payload = _facebook_run_to_dict(run) or {}
+        payload["status_reason"] = run.errors[0] if run.errors else None
+        return payload
+
+    @app.get("/facebook/runs/{run_id}/events")
+    def facebook_run_events(request: Request, run_id: int, limit: int = 500):
+        events = request.app.state.db.list_facebook_run_events(run_id, limit=max(1, min(limit, 2000)))
+        return {
+            "count": len(events),
+            "items": [
+                {
+                    "event_id": event.event_id,
+                    "run_id": event.run_id,
+                    "stage": event.stage,
+                    "scope": event.scope,
+                    "message": event.message,
+                    "payload": event.payload,
+                    "created_at": event.created_at.isoformat(),
+                }
+                for event in events
+            ],
+        }
 
     @app.get("/facebook/runs/latest")
     def facebook_latest_run(request: Request, mode: str | None = "collect"):
@@ -508,14 +664,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         group: str | None = None,
         category: str | None = None,
         has_phone: str | None = None,
+        lead_status: str | None = "active",
         new_since_hours: str | None = None,
     ):
+        parsed_lead_status = _parse_optional_str(lead_status) or "active"
         filters = _facebook_filters(
             group=_parse_optional_str(group),
             category=_parse_optional_str(category),
             has_phone=_parse_optional_bool(has_phone),
             new_since_hours=_parse_optional_int(new_since_hours, minimum=1, maximum=720),
         )
+        filters["lead_status"] = None if parsed_lead_status == "all" else parsed_lead_status
         items = request.app.state.db.list_facebook_posts(**filters, limit=500)
         return {"count": len(items), "items": items}
 
@@ -525,14 +684,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         group: str | None = None,
         category: str | None = None,
         has_phone: str | None = None,
+        lead_status: str | None = "active",
         new_since_hours: str | None = None,
     ):
+        parsed_lead_status = _parse_optional_str(lead_status) or "active"
         filters = _facebook_filters(
             group=_parse_optional_str(group),
             category=_parse_optional_str(category),
             has_phone=_parse_optional_bool(has_phone),
             new_since_hours=_parse_optional_int(new_since_hours, minimum=1, maximum=720),
         )
+        filters["lead_status"] = None if parsed_lead_status == "all" else parsed_lead_status
         items = request.app.state.db.list_facebook_posts(**filters, limit=5000)
 
         output = io.StringIO()
@@ -549,6 +711,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "posted_at",
                 "content_updated_at",
                 "post_excerpt",
+                "lead_status",
+                "lead_note",
             ]
         )
         for row in items:
@@ -564,6 +728,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     row.get("posted_at"),
                     row.get("content_updated_at"),
                     row.get("post_excerpt"),
+                    row.get("lead_status", "active"),
+                    row.get("lead_note", ""),
                 ]
             )
 
@@ -573,6 +739,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             media_type="text/csv",
             headers={"Content-Disposition": 'attachment; filename="facebook_remote_jobs.csv"'},
         )
+
+    @app.patch("/facebook/posts/{dedupe_key}/status")
+    def patch_facebook_post_status(request: Request, dedupe_key: str, payload: FacebookPostStatusPayload):
+        lead_status = payload.lead_status.strip().lower()
+        if lead_status not in {"active", "archived", "dismissed"}:
+            return JSONResponse(
+                {"message": "lead_status must be one of: active, archived, dismissed"},
+                status_code=400,
+            )
+        updated = request.app.state.db.update_facebook_post_status(dedupe_key=dedupe_key, lead_status=lead_status)
+        if not updated:
+            return JSONResponse({"message": "post not found"}, status_code=404)
+        return {"status": "ok", "lead_status": lead_status, "dedupe_key": dedupe_key}
+
+    @app.patch("/facebook/posts/{dedupe_key}/note")
+    def patch_facebook_post_note(request: Request, dedupe_key: str, payload: FacebookPostNotePayload):
+        updated = request.app.state.db.update_facebook_post_note(dedupe_key=dedupe_key, lead_note=payload.lead_note)
+        if not updated:
+            return JSONResponse({"message": "post not found"}, status_code=404)
+        return {"status": "ok", "dedupe_key": dedupe_key, "lead_note": payload.lead_note}
 
     return app
 
