@@ -39,10 +39,14 @@ def test_non_frozen_defaults_unchanged(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV_FILE", str(tmp_path / "does-not-exist.env"))
     monkeypatch.delenv("DB_PATH", raising=False)
     monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.delenv("ENABLE_SCHEDULER", raising=False)
+    monkeypatch.delenv("FACEBOOK_ENABLED", raising=False)
 
     settings = Settings.from_env()
     assert settings.db_path == "./data/jobs.db"
     assert settings.playwright_browsers_path is None
+    assert settings.enable_scheduler is False
+    assert settings.facebook_enabled is False
 
 
 def test_login_timeout_from_env(monkeypatch, tmp_path):

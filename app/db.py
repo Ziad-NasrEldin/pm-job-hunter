@@ -17,6 +17,7 @@ from app.models import (
     RunSummary,
     ScoredJob,
 )
+from app.security import like_escape
 
 
 def _utcnow() -> datetime:
@@ -57,8 +58,9 @@ class Database:
 
     @contextmanager
     def connect(self):
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
         try:
             yield conn
         finally:
@@ -418,6 +420,7 @@ class Database:
             return "unchanged"
 
     def prune_old_jobs(self, retention_days: int) -> int:
+        retention_days = max(1, int(retention_days))
         cutoff = _iso(_utcnow() - timedelta(days=retention_days))
         with self._lock, self.connect() as conn:
             cur = conn.execute("DELETE FROM jobs WHERE last_seen_at < ?", (cutoff,))
@@ -597,6 +600,13 @@ class Database:
                 FROM facebook_run_checkpoints c
                 JOIN facebook_runs r ON r.id = c.run_id
                 WHERE c.mode = ? AND r.status IN ('failed', 'partial_failed')
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM facebook_runs s
+                      WHERE s.mode = c.mode
+                        AND s.id > r.id
+                        AND s.status = 'success'
+                  )
                 ORDER BY c.id DESC
                 LIMIT 1
                 """,
@@ -905,15 +915,26 @@ class Database:
             conn.commit()
             return updated_group > 0
 
-    def list_facebook_groups(self, active_only: bool = True, limit: int = 500) -> list[dict[str, Any]]:
+    def list_facebook_groups(
+        self,
+        active_only: bool = True,
+        limit: int = 500,
+        *,
+        crawl_order: bool = False,
+    ) -> list[dict[str, Any]]:
         where = "WHERE is_active = 1" if active_only else ""
+        order_sql = (
+            "approved_at ASC, group_external_id ASC"
+            if crawl_order
+            else "updated_at DESC"
+        )
         with self.connect() as conn:
             rows = conn.execute(
                 f"""
                 SELECT *
                 FROM facebook_groups
                 {where}
-                ORDER BY updated_at DESC
+                ORDER BY {order_sql}
                 LIMIT ?
                 """,
                 (limit,),
@@ -1152,6 +1173,7 @@ class Database:
             return rowcount > 0
 
     def prune_facebook_posts(self, retention_days: int) -> list[dict[str, str]]:
+        retention_days = max(1, int(retention_days))
         cutoff = _iso(_utcnow() - timedelta(days=retention_days))
         with self._lock, self.connect() as conn:
             rows = conn.execute(
@@ -1192,8 +1214,8 @@ class Database:
                 where.append("lower(location) NOT LIKE '%alexandria%'")
                 where.append("lower(location) NOT LIKE '%cairo%'")
             else:
-                where.append("location LIKE ?")
-                values.append(f"%{location}%")
+                where.append("location LIKE ? ESCAPE '\\'")
+                values.append(f"%{like_escape(location)}%")
         if early_career is not None:
             where.append("is_early_career = ?")
             values.append(int(early_career))

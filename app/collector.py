@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from threading import Lock
 
 from app.adapters import GreenhouseAdapter, LeverAdapter, LinkedInPublicAdapter
 from app.config import Settings
@@ -9,7 +10,13 @@ from app.filters import normalize_raw_job, score_job, should_keep_job
 from app.models import RunSummary, SearchQuery
 
 
+class AlreadyRunningError(RuntimeError):
+    pass
+
+
 class JobCollector:
+    _run_lock = Lock()
+
     def __init__(self, settings: Settings, db: Database) -> None:
         self.settings = settings
         self.db = db
@@ -46,6 +53,14 @@ class JobCollector:
         return ordered
 
     def run_once(self) -> RunSummary:
+        if not self._run_lock.acquire(blocking=False):
+            raise AlreadyRunningError("A collection run is already in progress")
+        try:
+            return self._run_once_locked()
+        finally:
+            self._run_lock.release()
+
+    def _run_once_locked(self) -> RunSummary:
         started_at = datetime.now(UTC)
         run_id = self.db.create_run(started_at)
         errors: list[str] = []
@@ -81,8 +96,6 @@ class JobCollector:
             finally:
                 adapter.close()
 
-        self.db.prune_old_jobs(self.settings.retention_days)
-
         finished_at = datetime.now(UTC)
         if errors and total_kept > 0:
             status = "partial_failed"
@@ -90,6 +103,9 @@ class JobCollector:
             status = "failed"
         else:
             status = "success"
+
+        if status != "failed":
+            self.db.prune_old_jobs(self.settings.retention_days)
 
         self.db.finalize_run(
             run_id=run_id,

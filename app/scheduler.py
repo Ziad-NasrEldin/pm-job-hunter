@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -21,7 +21,12 @@ def build_scheduler(
     digest_service: DigestService,
     facebook_collector: FacebookCollector | None = None,
 ) -> BackgroundScheduler:
-    scheduler = BackgroundScheduler(timezone=ZoneInfo(settings.app_timezone))
+    try:
+        timezone = ZoneInfo(settings.app_timezone)
+    except ZoneInfoNotFoundError:
+        logger.warning("Invalid APP_TIMEZONE %s; falling back to UTC", settings.app_timezone)
+        timezone = ZoneInfo("UTC")
+    scheduler = BackgroundScheduler(timezone=timezone)
 
     def run_collection_job() -> None:
         try:

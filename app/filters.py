@@ -11,15 +11,11 @@ ROLE_PRIORITY = {
     "associate_product_manager": 100,
 }
 
-SENIOR_BLOCKLIST = [
-    "senior",
-    "lead",
-    "principal",
-    "director",
-    "head of",
-    "vice president",
-    "vp ",
-]
+SENIOR_TITLE_RE = re.compile(
+    r"\b(senior|staff|principal|director|distinguished|svp|evp|vp)\b|\bhead of\b|\bvice president\b",
+    re.I,
+)
+LEAD_TITLE_RE = re.compile(r"\blead\b", re.I)
 
 JUNIOR_HINTS = [
     "entry level",
@@ -32,7 +28,7 @@ JUNIOR_HINTS = [
 ]
 
 YEAR_RANGE_PATTERNS = [
-    re.compile(r"\b(\d{1,2})\s*[-–to]{1,3}\s*(\d{1,2})\s*\+?\s*years?\b", re.I),
+    re.compile(r"\b(\d{1,2})\s*(?:-|–|to)\s*(\d{1,2})\s*\+?\s*years?\b", re.I),
     re.compile(r"\b(\d{1,2})\s*\+\s*years?\b", re.I),
     re.compile(r"\bminimum\s+(\d{1,2})\s+years?\b", re.I),
     re.compile(r"\bat\s+least\s+(\d{1,2})\s+years?\b", re.I),
@@ -92,9 +88,18 @@ def extract_years_range(text: str) -> tuple[int | None, int | None]:
     return None, None
 
 
-def is_seniority_blocked(text: str) -> bool:
-    lowered = clean_text(text).lower()
-    return any(keyword in lowered for keyword in SENIOR_BLOCKLIST)
+def is_seniority_blocked(title: str, description: str = "") -> bool:
+    title_text = clean_text(title)
+    if SENIOR_TITLE_RE.search(title_text):
+        return True
+    if LEAD_TITLE_RE.search(title_text):
+        return True
+    description_text = clean_text(description)
+    if SENIOR_TITLE_RE.search(description_text) and re.search(
+        r"\b(role|title|position|looking for|hiring)\b", description_text, re.I
+    ):
+        return True
+    return False
 
 
 def score_early_career(text: str, title: str, years_min: int | None, years_max: int | None) -> float:
@@ -156,7 +161,7 @@ def normalize_raw_job(raw: RawJob) -> NormalizedJob:
 def score_job(normalized: NormalizedJob) -> ScoredJob:
     combined = f"{normalized.title} {normalized.description}"
     years_min, years_max = extract_years_range(combined)
-    seniority_blocked = is_seniority_blocked(combined)
+    seniority_blocked = is_seniority_blocked(normalized.title, normalized.description)
     score = score_early_career(combined, normalized.title, years_min, years_max)
     is_early = score >= 0.45 and not seniority_blocked
     return ScoredJob(
@@ -186,6 +191,8 @@ def should_keep_job(scored: ScoredJob) -> bool:
     if scored.role_priority <= 0:
         return False
     if scored.seniority_blocked:
+        return False
+    if scored.years_min is not None and scored.years_min >= 8:
         return False
     return True
 

@@ -1,14 +1,24 @@
-PM Job Hunter - First Run Notes
+PM Job Hunter - First Run
 
-1) The app opens in your browser on launch.
-2) Local config file:
-   %LOCALAPPDATA%\PMJobHunter\.env.local
-3) Local data path:
-   %LOCALAPPDATA%\PMJobHunter\data
+This app runs only on your PC. It opens in the browser at http://127.0.0.1/...
+Do not put it on a server or share that URL outside this computer.
 
-Facebook setup:
-1) Open the app and use "Facebook Login" in Quick Actions.
-2) Complete login in the browser window until status says session is ready.
-3) Run "Group Discovery", approve groups, then use "Run Facebook Scraper".
+Windows SmartScreen
+This installer is unsigned. If you see "Windows protected your PC":
+1) Click More info
+2) Click Run anyway
 
-Note: this release is unsigned, so Windows SmartScreen may show a warning.
+After install
+1) Launch PM Job Hunter from the Start menu or desktop shortcut.
+2) A browser tab opens on the PM Search tab.
+3) Click "Run PM Collection" to pull Product Owner / PM / APM roles.
+
+Facebook is OFF by default. To turn it on, edit:
+  %LOCALAPPDATA%\PMJobHunter\.env.local
+set FACEBOOK_ENABLED=true, restart the app, then use Facebook Login
+in Quick Actions. Facebook login stores your session cookies on this PC.
+
+Files
+Config: %LOCALAPPDATA%\PMJobHunter\.env.local
+Data:   %LOCALAPPDATA%\PMJobHunter\data
+

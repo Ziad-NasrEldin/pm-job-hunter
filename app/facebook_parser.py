@@ -8,8 +8,20 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from bs4 import BeautifulSoup
 
-_GROUP_URL_RE = re.compile(r"https?://[^\s,|]+facebook\.com/[^\s,|]*groups/[^\s,|]+", re.I)
-_GROUP_ID_RE = re.compile(r"^(\d{5,}|[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+)$")
+from app.security import is_facebook_host
+
+_GROUP_URL_RE = re.compile(
+    r"https?://(?:www\.|m\.|web\.)?facebook\.com/[^\s,|]*groups/[^\s,|]+",
+    re.I,
+)
+_GROUP_ID_RE = re.compile(r"^(\d{5,}|[A-Za-z][A-Za-z0-9.]{4,})$")
+_GROUP_URL_EXCLUDE_TOKENS = (
+    "/groups/feed",
+    "/groups/discover",
+    "/groups/you",
+    "/groups/join",
+    "/groups/create",
+)
 
 
 def parse_group_external_id(group_url: str) -> str:
@@ -39,6 +51,10 @@ def normalize_facebook_url(raw_url: str) -> str:
         target = parse_qs(parsed.query).get("u", [""])[0]
         if target:
             url = unquote(target)
+
+    parsed = urlparse(url)
+    if parsed.scheme in {"http", "https"} and not is_facebook_host(parsed.hostname):
+        return ""
     return url
 
 
@@ -52,6 +68,9 @@ def parse_group_candidates_from_html(html: str, discovered_keyword: str) -> list
         if not href:
             continue
         if "facebook.com/groups/" not in href:
+            continue
+        lowered = href.lower()
+        if any(token in lowered for token in _GROUP_URL_EXCLUDE_TOKENS):
             continue
 
         name = anchor.get_text(" ", strip=True)
@@ -143,6 +162,8 @@ def _parse_import_token(*, line: str, value: str, name_hint: str, line_number: i
     url_match = _GROUP_URL_RE.search(token_source) or _GROUP_URL_RE.search(line)
     if url_match:
         group_url = normalize_facebook_url(url_match.group(0).rstrip(".,;"))
+        if not group_url:
+            return None, "malformed_group_url_or_id"
         group_external_id = parse_group_external_id(group_url)
         return (
             {

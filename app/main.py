@@ -6,24 +6,32 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-import httpx
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+from app.collector import AlreadyRunningError as JobAlreadyRunningError
 from app.collector import JobCollector
 from app.config import Settings
 from app.db import Database
 from app.digest import DigestService
 from app.facebook_alerts import FacebookAlertService
+from app.facebook_collector import AlreadyRunningError as FacebookAlreadyRunningError
 from app.facebook_collector import FacebookCollector
 from app.facebook_parser import (
     parse_imported_groups_csv_text_detailed,
     parse_imported_groups_text_detailed,
 )
 from app.scheduler import build_scheduler
+from app.security import (
+    MAX_IMPORT_BYTES,
+    ImportUrlError,
+    csv_safe_cell,
+    fetch_allowed_csv,
+    is_local_web_origin,
+)
 
 
 class FacebookGroupImportPayload(BaseModel):
@@ -152,22 +160,8 @@ def _parse_optional_int(value: str | None, minimum: int, maximum: int) -> int | 
     return parsed
 
 
-def _google_sheet_to_csv_url(raw_url: str) -> str:
-    cleaned = (raw_url or "").strip()
-    if "docs.google.com/spreadsheets/d/" not in cleaned:
-        return cleaned
-
-    parts = cleaned.split("/d/", 1)
-    if len(parts) < 2:
-        return cleaned
-    doc_id = parts[1].split("/", 1)[0]
-    if not doc_id:
-        return cleaned
-
-    gid = "0"
-    if "gid=" in cleaned:
-        gid = cleaned.split("gid=", 1)[1].split("&", 1)[0] or "0"
-    return f"https://docs.google.com/spreadsheets/d/{doc_id}/export?format=csv&gid={gid}"
+def _busy_response(message: str) -> JSONResponse:
+    return JSONResponse({"status": "already_running", "message": message}, status_code=409)
 
 
 def _import_groups_from_report(db: Database, report: dict[str, Any], source: str) -> dict[str, Any]:
@@ -284,12 +278,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if app.state.scheduler is not None:
             app.state.scheduler.shutdown(wait=False)
 
-    app = FastAPI(title="PM Job Hunter", version="0.3.5", lifespan=lifespan)
+    app = FastAPI(title="PM Job Hunter", version="0.4.0", lifespan=lifespan)
     app.mount(
         "/assets/screenshots",
         StaticFiles(directory=settings.facebook_screenshots_dir),
         name="facebook_screenshots",
     )
+
+    @app.middleware("http")
+    async def local_origin_guard(request: Request, call_next):
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            origin = request.headers.get("origin") or request.headers.get("referer")
+            if origin and not is_local_web_origin(origin):
+                return JSONResponse({"message": "Cross-origin requests are not allowed"}, status_code=403)
+        return await call_next(request)
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(
@@ -300,12 +302,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         location: str | None = None,
         early_career: str | None = None,
         min_experience_score: str | None = None,
-        new_since_hours: str | None = "24",
+        new_since_hours: str | None = None,
         fb_group: str | None = None,
         fb_category: str | None = None,
         fb_has_phone: str | None = None,
         fb_lead_status: str | None = "active",
-        fb_new_since_hours: str | None = "24",
+        fb_new_since_hours: str | None = None,
     ):
         parsed_early_career = _parse_optional_bool(early_career)
         parsed_min_score = _parse_optional_float(min_experience_score, minimum=0.0, maximum=1.0)
@@ -413,7 +415,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/runs/manual")
     def run_manual(request: Request):
-        run = request.app.state.collector.run_once()
+        try:
+            run = request.app.state.collector.run_once()
+        except JobAlreadyRunningError as exc:
+            return _busy_response(str(exc))
         return JSONResponse(_run_to_dict(run))
 
     @app.post("/digest/manual")
@@ -488,16 +493,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for row in jobs:
             writer.writerow(
                 [
-                    row["title"],
-                    row["company"],
-                    row["location"],
-                    row["source"],
-                    row["role_family"],
+                    csv_safe_cell(row["title"]),
+                    csv_safe_cell(row["company"]),
+                    csv_safe_cell(row["location"]),
+                    csv_safe_cell(row["source"]),
+                    csv_safe_cell(row["role_family"]),
                     row["early_career_score"],
-                    row["apply_url"],
-                    row["job_url"],
-                    row["posted_at"],
-                    row["content_updated_at"],
+                    csv_safe_cell(row["apply_url"]),
+                    csv_safe_cell(row["job_url"]),
+                    csv_safe_cell(row["posted_at"]),
+                    csv_safe_cell(row["content_updated_at"]),
                 ]
             )
         output.seek(0)
@@ -510,12 +515,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/facebook/login/bootstrap")
     def facebook_login_bootstrap(request: Request):
-        result = request.app.state.facebook_collector.bootstrap_login()
+        try:
+            result = request.app.state.facebook_collector.bootstrap_login()
+        except RuntimeError as exc:
+            return JSONResponse({"status": "failed", "message": str(exc)}, status_code=409)
         return JSONResponse(result)
 
     @app.post("/facebook/discovery/run")
     def facebook_discovery_run(request: Request):
-        run = request.app.state.facebook_collector.run_discovery()
+        try:
+            run = request.app.state.facebook_collector.run_discovery()
+        except FacebookAlreadyRunningError as exc:
+            return _busy_response(str(exc))
         return JSONResponse(_facebook_run_to_dict(run))
 
     @app.get("/facebook/groups/candidates")
@@ -563,7 +574,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/facebook/groups/import.csv")
     async def import_facebook_groups_csv(request: Request, file: UploadFile = File(...)):
-        content = (await file.read()).decode("utf-8", errors="replace")
+        raw = await file.read()
+        if len(raw) > MAX_IMPORT_BYTES:
+            return JSONResponse(
+                {"status": "failed", "message": "CSV file is too large (1MB max)."},
+                status_code=400,
+            )
+        content = raw.decode("utf-8", errors="replace")
         report = parse_imported_groups_csv_text_detailed(content)
         result = _import_groups_from_report(request.app.state.db, report, source="manual_import_csv")
         if result["imported"] == 0:
@@ -583,18 +600,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not raw_url:
             return JSONResponse({"status": "empty", "message": "Import URL is required."}, status_code=400)
 
-        fetch_url = _google_sheet_to_csv_url(raw_url)
         try:
-            with httpx.Client(timeout=request.app.state.settings.request_timeout_seconds) as client:
-                response = client.get(fetch_url)
-                response.raise_for_status()
-                csv_text = response.text
-        except Exception as exc:  # noqa: BLE001
+            csv_text = fetch_allowed_csv(
+                raw_url,
+                timeout=request.app.state.settings.request_timeout_seconds,
+            )
+        except ImportUrlError as exc:
+            return JSONResponse({"status": "failed", "message": str(exc)}, status_code=400)
+        except Exception:  # noqa: BLE001
             return JSONResponse(
-                {
-                    "status": "failed",
-                    "message": f"Unable to fetch import URL: {str(exc).strip() or exc.__class__.__name__}",
-                },
+                {"status": "failed", "message": "Unable to fetch import URL."},
                 status_code=400,
             )
 
@@ -613,7 +628,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/facebook/runs/manual")
     def facebook_collect_manual(request: Request, resume: bool = True):
-        run = request.app.state.facebook_collector.run_once(resume=resume)
+        try:
+            run = request.app.state.facebook_collector.run_once(resume=resume)
+        except FacebookAlreadyRunningError as exc:
+            return _busy_response(str(exc))
         return JSONResponse(_facebook_run_to_dict(run))
 
     @app.get("/facebook/runs")
@@ -621,6 +639,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         parsed_mode = _parse_optional_str(mode)
         runs = request.app.state.db.list_facebook_runs(mode=parsed_mode, limit=max(1, min(limit, 500)))
         return {"count": len(runs), "items": [_facebook_run_to_dict(run) for run in runs]}
+
+    @app.get("/facebook/runs/latest")
+    def facebook_latest_run(request: Request, mode: str | None = "collect"):
+        parsed_mode = _parse_optional_str(mode) or "collect"
+        run = request.app.state.db.get_latest_facebook_run(mode=parsed_mode)
+        if run is None:
+            return JSONResponse({"message": "No facebook runs yet"}, status_code=404)
+        return JSONResponse(_facebook_run_to_dict(run))
 
     @app.get("/facebook/runs/{run_id}")
     def facebook_run_detail(request: Request, run_id: int):
@@ -649,14 +675,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 for event in events
             ],
         }
-
-    @app.get("/facebook/runs/latest")
-    def facebook_latest_run(request: Request, mode: str | None = "collect"):
-        parsed_mode = _parse_optional_str(mode) or "collect"
-        run = request.app.state.db.get_latest_facebook_run(mode=parsed_mode)
-        if run is None:
-            return JSONResponse({"message": "No facebook runs yet"}, status_code=404)
-        return JSONResponse(_facebook_run_to_dict(run))
 
     @app.get("/facebook/posts")
     def get_facebook_posts(
@@ -718,18 +736,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for row in items:
             writer.writerow(
                 [
-                    row["group_external_id"],
-                    row["group_name"],
-                    row["post_url"],
-                    row["category_tag"],
-                    ";".join(row.get("phone_numbers", [])),
-                    ";".join(row.get("whatsapp_links", [])),
-                    row.get("screenshot_path") or "",
-                    row.get("posted_at"),
-                    row.get("content_updated_at"),
-                    row.get("post_excerpt"),
-                    row.get("lead_status", "active"),
-                    row.get("lead_note", ""),
+                    csv_safe_cell(row["group_external_id"]),
+                    csv_safe_cell(row["group_name"]),
+                    csv_safe_cell(row["post_url"]),
+                    csv_safe_cell(row["category_tag"]),
+                    csv_safe_cell(";".join(row.get("phone_numbers", []))),
+                    csv_safe_cell(";".join(row.get("whatsapp_links", []))),
+                    csv_safe_cell(row.get("screenshot_path") or ""),
+                    csv_safe_cell(row.get("posted_at")),
+                    csv_safe_cell(row.get("content_updated_at")),
+                    csv_safe_cell(row.get("post_excerpt")),
+                    csv_safe_cell(row.get("lead_status", "active")),
+                    csv_safe_cell(row.get("lead_note", "")),
                 ]
             )
 

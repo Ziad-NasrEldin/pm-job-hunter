@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 from app.adapters.base import JobAdapter
@@ -8,7 +9,16 @@ from app.models import RawJob, SearchQuery
 
 def _matches_keywords(title: str, keywords: list[str]) -> bool:
     lowered = title.lower()
-    return any(keyword.lower() in lowered for keyword in keywords)
+    for keyword in keywords:
+        key = keyword.lower().strip()
+        if not key:
+            continue
+        if len(key) <= 3:
+            if re.search(rf"\b{re.escape(key)}\b", lowered):
+                return True
+        elif key in lowered:
+            return True
+    return False
 
 
 def _matches_locations(location: str, accepted: list[str]) -> bool:
@@ -32,24 +42,42 @@ class LeverAdapter(JobAdapter):
     @staticmethod
     def parse_jobs_payload(company: str, payload: list[dict]) -> list[RawJob]:
         jobs: list[RawJob] = []
+        if not isinstance(payload, list):
+            return jobs
         for row in payload:
+            if not isinstance(row, dict):
+                continue
             categories = row.get("categories") or {}
+            if not isinstance(categories, dict):
+                categories = {}
+            list_plain_parts: list[str] = []
+            lists_payload = row.get("lists")
+            if isinstance(lists_payload, list):
+                for item in lists_payload:
+                    if isinstance(item, dict):
+                        list_plain_parts.append(str(item.get("text") or ""))
+                        list_plain_parts.append(str(item.get("content") or ""))
             description_parts = [
                 row.get("descriptionPlain") or "",
                 row.get("listsPlain") or "",
+                "\n".join(part for part in list_plain_parts if part),
                 row.get("additionalPlain") or "",
             ]
+            workplace = str(row.get("workplaceType") or "").lower()
+            location = categories.get("location") or "Unknown"
+            if workplace == "remote" and "remote" not in location.lower():
+                location = f"Remote - {location}"
             jobs.append(
                 RawJob(
                     source="lever",
                     external_id=f"{company}:{row.get('id')}",
-                    title=row.get("text", ""),
+                    title=row.get("text") or "",
                     company=company,
-                    location=categories.get("location", "Unknown"),
+                    location=location,
                     description="\n".join(part for part in description_parts if part),
-                    job_url=row.get("hostedUrl", ""),
-                    apply_url=row.get("applyUrl", row.get("hostedUrl", "")),
-                    posted_at=_epoch_ms_to_datetime(row.get("createdAt")),
+                    job_url=row.get("hostedUrl") or "",
+                    apply_url=row.get("applyUrl") or row.get("hostedUrl") or "",
+                    posted_at=_epoch_ms_to_datetime(row.get("createdAt") if isinstance(row.get("createdAt"), int) else None),
                     metadata={"team": categories.get("team"), "company_slug": company},
                 )
             )
@@ -62,7 +90,10 @@ class LeverAdapter(JobAdapter):
         for company in self.settings.lever_companies:
             url = f"{self.base_url}/{company}"
             response = self.get(url, params={"mode": "json"}, min_interval=0.5)
-            payload = response.json()
+            try:
+                payload = response.json()
+            except ValueError:
+                continue
             for job in self.parse_jobs_payload(company, payload):
                 if not _matches_keywords(job.title, query.keywords):
                     continue

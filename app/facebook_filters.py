@@ -10,7 +10,6 @@ REMOTE_KEYWORDS = [
     "work from home",
     "wfh",
     "home based",
-    "online",
     "عن بعد",
     "من المنزل",
     "من البيت",
@@ -36,7 +35,7 @@ JOB_KEYWORDS = [
     "التوظيف",
 ]
 
-GROUP_EGYPT_MARKERS = ["egypt", "cairo", "alexandria", "giza", "egy", "مصر", "القاهرة", "اسكندرية", "الإسكندرية", "الجيزة"]
+GROUP_EGYPT_MARKERS = ["egypt", "cairo", "alexandria", "giza", "مصر", "القاهرة", "اسكندرية", "الإسكندرية", "الجيزة"]
 GROUP_REMOTE_MARKERS = ["remote", "work from home", "wfh", "عن بعد", "من المنزل", "من البيت", "اونلاين", "أونلاين", "ريموت"]
 GROUP_JOB_MARKERS = ["jobs", "job", "hiring", "vacancy", "وظائف", "وظيفة", "فرص عمل", "مطلوب", "توظيف", "شغل"]
 
@@ -63,7 +62,7 @@ CATEGORY_KEYWORDS = {
         "خدمه عملاء",
     ],
     "sales": [
-        "sales",
+        r"\bsales\b",
         "inside sales",
         "outbound",
         "b2b sales",
@@ -72,7 +71,7 @@ CATEGORY_KEYWORDS = {
     ],
     "data_entry": [
         "data entry",
-        "excel",
+        r"\bexcel\b",
         "ادخال بيانات",
         "إدخال بيانات",
     ],
@@ -81,9 +80,10 @@ CATEGORY_KEYWORDS = {
 _WHITESPACE_RE = re.compile(r"\s+")
 _PHONE_CANDIDATE_RE = re.compile(r"(?:\+?\d[\d\s\-\(\)]{6,}\d)")
 _WHATSAPP_URL_RE = re.compile(
-    r"https?://(?:wa\.me/\d+|api\.whatsapp\.com/send\?phone=\d+|chat\.whatsapp\.com/[A-Za-z0-9]+|(?:www\.)?whatsapp\.com/[^\s]+)",
+    r"https?://(?:wa\.me/\+?\d+|api\.whatsapp\.com/send/?\?phone=\+?\d+|chat\.whatsapp\.com/[A-Za-z0-9]+|(?:www\.)?whatsapp\.com/[^\s]+)",
     re.I,
 )
+_DATE_DIGITS_RE = re.compile(r"^(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$")
 _WHATSAPP_PHONE_HINT_RE = re.compile(r"(?:واتساب|واتس\s*اب|whats?\s*app)\s*[:\-]?\s*(\+?\d[\d\s\-\(\)]{6,}\d)", re.I)
 
 
@@ -122,6 +122,8 @@ def _normalize_phone_candidate(raw: str) -> str | None:
 
     digits = re.sub(r"\D", "", token)
     if len(digits) < 8 or len(digits) > 15:
+        return None
+    if _DATE_DIGITS_RE.match(digits):
         return None
 
     if token.startswith("+"):
@@ -173,7 +175,10 @@ def extract_whatsapp_links(text: str) -> list[str]:
 def classify_job_category(text: str) -> str:
     normalized = normalize_search_text(text)
     for category, keywords in CATEGORY_KEYWORDS.items():
-        if any(keyword in normalized for keyword in keywords):
+        if any(
+            re.search(keyword, normalized, re.I) if keyword.startswith(r"\b") else keyword in normalized
+            for keyword in keywords
+        ):
             return category
     return "other_remote_job"
 

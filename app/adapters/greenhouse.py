@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from dateutil import parser as date_parser
@@ -10,7 +11,16 @@ from app.models import RawJob, SearchQuery
 
 def _matches_keywords(title: str, keywords: list[str]) -> bool:
     lowered = title.lower()
-    return any(keyword.lower() in lowered for keyword in keywords)
+    for keyword in keywords:
+        key = keyword.lower().strip()
+        if not key:
+            continue
+        if len(key) <= 3:
+            if re.search(rf"\b{re.escape(key)}\b", lowered):
+                return True
+        elif key in lowered:
+            return True
+    return False
 
 
 def _matches_locations(location: str, accepted: list[str]) -> bool:
@@ -25,7 +35,16 @@ class GreenhouseAdapter(JobAdapter):
     @staticmethod
     def parse_jobs_payload(board_token: str, payload: dict) -> list[RawJob]:
         jobs: list[RawJob] = []
-        for row in payload.get("jobs", []):
+        if not isinstance(payload, dict):
+            return jobs
+        rows = payload.get("jobs")
+        if not isinstance(rows, list):
+            return jobs
+        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+        company = meta.get("board") or board_token
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
             posted_at: datetime | None = None
             if row.get("updated_at"):
                 try:
@@ -33,16 +52,23 @@ class GreenhouseAdapter(JobAdapter):
                 except (TypeError, ValueError):
                     posted_at = None
             description = row.get("content") or ""
+            location = row.get("location")
+            if isinstance(location, dict):
+                location_name = location.get("name") or "Unknown"
+            elif isinstance(location, str) and location.strip():
+                location_name = location.strip()
+            else:
+                location_name = "Unknown"
             jobs.append(
                 RawJob(
                     source="greenhouse",
                     external_id=f"{board_token}:{row.get('id')}",
-                    title=row.get("title", ""),
-                    company=payload.get("meta", {}).get("board", board_token),
-                    location=(row.get("location") or {}).get("name", "Unknown"),
+                    title=row.get("title") or "",
+                    company=company,
+                    location=location_name,
                     description=description,
-                    job_url=row.get("absolute_url", ""),
-                    apply_url=row.get("absolute_url", ""),
+                    job_url=row.get("absolute_url") or "",
+                    apply_url=row.get("absolute_url") or "",
                     posted_at=posted_at,
                     metadata={"board_token": board_token},
                 )
@@ -56,7 +82,10 @@ class GreenhouseAdapter(JobAdapter):
         for board_token in self.settings.greenhouse_boards:
             url = f"{self.base_url}/{board_token}/jobs"
             response = self.get(url, params={"content": "true"}, min_interval=0.5)
-            payload = response.json()
+            try:
+                payload = response.json()
+            except ValueError:
+                continue
             for job in self.parse_jobs_payload(board_token, payload):
                 if not _matches_keywords(job.title, query.keywords):
                     continue

@@ -355,7 +355,7 @@
             <div class="controls" style="margin-bottom:8px;">
                 <button id="runNowButton" type="button">Run PM Collection</button>
                 <button id="digestButton" class="secondary" type="button">Send PM Digest</button>
-                <a href="/jobs/export.csv" style="margin-left:auto;">Export PM CSV</a>
+                <a href="/jobs/export.csv?role={{ filters.role or '' }}&source={{ filters.source or '' }}&location={{ filters.location or '' }}&early_career={% if filters.early_career is none %}{% else %}{{ filters.early_career|string|lower }}{% endif %}&min_experience_score={{ filters.min_experience_score or '' }}&new_since_hours={{ filters.new_since_hours or '' }}" style="margin-left:auto;">Export PM CSV</a>
             </div>
             <div class="muted" id="runStatus">
                 {% if latest_run %}
@@ -447,7 +447,7 @@
             <div class="controls" style="margin-bottom:8px;">
                 <button id="fbDiscoverButton" type="button">Run Group Discovery</button>
                 <button id="fbRunButton" class="secondary" type="button">Run Facebook Collection</button>
-                <a href="/facebook/posts/export.csv" style="margin-left:auto;">Export Facebook CSV</a>
+                <a href="/facebook/posts/export.csv?group={{ facebook_filters.group or '' }}&category={{ facebook_filters.category or '' }}&has_phone={% if facebook_filters.has_phone is none %}{% else %}{{ facebook_filters.has_phone|string|lower }}{% endif %}&lead_status={{ facebook_filters.lead_status or 'all' }}&new_since_hours={{ facebook_filters.new_since_hours or '' }}" style="margin-left:auto;">Export Facebook CSV</a>
             </div>
             <div class="muted" id="fbRunStatus">
                 {% if latest_facebook_run %}
@@ -706,17 +706,6 @@
         let cachedFacebookStatus = null;
         let importMode = "paste";
 
-        function appendOpsLine(message, kind = "info") {
-            const output = document.getElementById("opsConsoleOutput");
-            if (!output) return;
-            const line = document.createElement("div");
-            line.className = "terminal-line";
-            const time = new Date().toLocaleTimeString();
-            const prefix = kind === "error" ? "ERR" : (kind === "ok" ? "OK" : "LOG");
-            line.innerHTML = `<span class="cmd">[${time}] ${prefix}</span> ${message}`;
-            output.prepend(line);
-        }
-
         function escapeHtml(value) {
             return String(value ?? "")
                 .replaceAll("&", "&amp;")
@@ -724,6 +713,17 @@
                 .replaceAll(">", "&gt;")
                 .replaceAll('\"', "&quot;")
                 .replaceAll("'", "&#39;");
+        }
+
+        function appendOpsLine(message, kind = "info") {
+            const output = document.getElementById("opsConsoleOutput");
+            if (!output) return;
+            const line = document.createElement("div");
+            line.className = "terminal-line";
+            const time = new Date().toLocaleTimeString();
+            const prefix = kind === "error" ? "ERR" : (kind === "ok" ? "OK" : "LOG");
+            line.innerHTML = `<span class="cmd">[${time}] ${prefix}</span> ${escapeHtml(message)}`;
+            output.prepend(line);
         }
 
         function switchTab(tabName) {
@@ -783,13 +783,13 @@
             const checkedAt = statusData.session_checked_at || "-";
 
             grid.innerHTML = `
-                <div class="status-card"><strong>Feature</strong>${enabledText}</div>
-                <div class="status-card"><strong>Session</strong>${sessionText}</div>
-                <div class="status-card"><strong>Approved Groups</strong>${statusData.approved_groups_count}</div>
-                <div class="status-card"><strong>Collect Run</strong>${collectText}</div>
-                <div class="status-card"><strong>Discovery Run</strong>${discoverText}</div>
-                <div class="status-card"><strong>Preflight</strong>${canCollectText}</div>
-                <div class="status-card"><strong>Session Checked</strong>${checkedAt}</div>
+                <div class="status-card"><strong>Feature</strong>${escapeHtml(enabledText)}</div>
+                <div class="status-card"><strong>Session</strong>${escapeHtml(sessionText)}</div>
+                <div class="status-card"><strong>Approved Groups</strong>${escapeHtml(statusData.approved_groups_count)}</div>
+                <div class="status-card"><strong>Collect Run</strong>${escapeHtml(collectText)}</div>
+                <div class="status-card"><strong>Discovery Run</strong>${escapeHtml(discoverText)}</div>
+                <div class="status-card"><strong>Preflight</strong>${escapeHtml(canCollectText)}</div>
+                <div class="status-card"><strong>Session Checked</strong>${escapeHtml(checkedAt)}</div>
             `;
         }
 

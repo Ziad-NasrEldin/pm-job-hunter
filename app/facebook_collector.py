@@ -3,6 +3,7 @@ from __future__ import annotations
 import traceback
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from app.adapters import FacebookGroupsAdapter
@@ -10,9 +11,32 @@ from app.config import Settings
 from app.db import Database
 from app.facebook_alerts import FacebookAlertService
 from app.models import FacebookRunSummary
+from app.security import path_is_within
+
+
+class AlreadyRunningError(RuntimeError):
+    pass
+
+
+def _parse_dt(value: str | datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 class FacebookCollector:
+    _run_lock = Lock()
+
     def __init__(
         self,
         settings: Settings,
@@ -30,14 +54,16 @@ class FacebookCollector:
         adapter = self._build_adapter()
         return adapter.bootstrap_login()
 
-    def check_session_status(self) -> dict[str, Any]:
+    def check_session_status(self, *, live: bool = False) -> dict[str, Any]:
         adapter = self._build_adapter()
-        if hasattr(adapter, "validate_session"):
+        if live and hasattr(adapter, "validate_session"):
             result = adapter.validate_session()
+        elif hasattr(adapter, "inspect_session_file"):
+            result = adapter.inspect_session_file()
         else:
             result = {
                 "session_file_present": Path(self.settings.facebook_storage_state_path).exists(),
-                "session_valid": True,
+                "session_valid": False,
                 "reason": "adapter_does_not_expose_session_validation",
             }
         result["session_checked_at"] = datetime.now(UTC).isoformat()
@@ -136,7 +162,7 @@ class FacebookCollector:
                 errors=errors,
             )
 
-        session = self.check_session_status()
+        session = self.check_session_status(live=True)
         self._record_event(
             run_id=run_id,
             stage="preflight.session",
@@ -209,6 +235,14 @@ class FacebookCollector:
         )
 
     def run_once(self, resume: bool = True) -> FacebookRunSummary:
+        if not self._run_lock.acquire(blocking=False):
+            raise AlreadyRunningError("A Facebook collection run is already in progress")
+        try:
+            return self._run_once_locked(resume=resume)
+        finally:
+            self._run_lock.release()
+
+    def _run_once_locked(self, resume: bool = True) -> FacebookRunSummary:
         started_at = datetime.now(UTC)
         run_id = self.db.create_facebook_run(started_at=started_at, mode="collect")
         errors: list[str] = []
@@ -239,7 +273,7 @@ class FacebookCollector:
                 errors=errors,
             )
 
-        groups = self.db.list_facebook_groups(active_only=True)
+        groups = self.db.list_facebook_groups(active_only=True, crawl_order=True)
         if not groups:
             errors = ["No approved active groups found. Approve groups in dashboard first."]
             return self._finalize(
@@ -254,7 +288,7 @@ class FacebookCollector:
                 errors=errors,
             )
 
-        session = self.check_session_status()
+        session = self.check_session_status(live=True)
         self._record_event(
             run_id=run_id,
             stage="preflight.session",
@@ -277,24 +311,26 @@ class FacebookCollector:
                 errors=errors,
             )
 
-        start_index = 0
+        groups_to_process = list(groups)
         if resume:
             checkpoint = self.db.get_latest_resumable_checkpoint(mode="collect")
             if checkpoint is not None:
-                start_index = max(0, min(int(checkpoint.get("next_group_index", 0)), len(groups)))
-                self._record_event(
-                    run_id=run_id,
-                    stage="resume.checkpoint",
-                    scope="collect",
-                    message="Resuming from previous checkpoint",
-                    payload={
-                        "from_run_id": checkpoint.get("run_id"),
-                        "last_success_group_id": checkpoint.get("last_success_group_id"),
-                        "next_group_index": start_index,
-                    },
-                )
+                prior = self.db.get_facebook_run(int(checkpoint["run_id"]))
+                watermark = _parse_dt(prior.started_at) if prior is not None else None
+                if watermark is not None:
+                    groups_to_process = [group for group in groups if self._needs_resume(group, watermark)]
+                    self._record_event(
+                        run_id=run_id,
+                        stage="resume.checkpoint",
+                        scope="collect",
+                        message="Resuming groups not crawled since the last failed run",
+                        payload={
+                            "from_run_id": checkpoint.get("run_id"),
+                            "last_success_group_id": checkpoint.get("last_success_group_id"),
+                            "remaining_groups": len(groups_to_process),
+                        },
+                    )
 
-        groups_to_process = groups[start_index:]
         if not groups_to_process:
             return self._finalize(
                 run_id=run_id,
@@ -309,28 +345,35 @@ class FacebookCollector:
             )
 
         adapter = self._build_adapter()
-        adapter_runtime_error: str | None = None
+        grouped_posts: dict[str, list] = {}
+        grouped_errors: dict[str, str] = {}
 
         try:
             grouped_posts, grouped_errors = adapter.fetch_groups_posts(groups_to_process)
         except Exception as exc:  # noqa: BLE001
             message = str(exc).strip() or exc.__class__.__name__
-            grouped_posts = {}
-            grouped_errors = {}
-            adapter_runtime_error = message
-
-        if adapter_runtime_error:
             trace = traceback.format_exc(limit=8)
-            errors.append(f"{adapter.source_name}: {adapter_runtime_error}")
+            errors.append(f"{adapter.source_name}: {message}")
             self._record_event(
                 run_id=run_id,
                 stage="collect.runtime_error",
                 scope="collect",
                 message="Adapter runtime error",
-                payload={"error": adapter_runtime_error, "traceback": trace[-4000:]},
+                payload={"error": message, "traceback": trace[-4000:]},
+            )
+            return self._finalize(
+                run_id=run_id,
+                mode="collect",
+                started_at=started_at,
+                status="failed",
+                total_fetched=0,
+                total_kept=0,
+                total_new=0,
+                total_updated=0,
+                errors=errors,
             )
 
-        for idx, group in enumerate(groups_to_process, start=start_index):
+        for idx, group in enumerate(groups_to_process):
             group_id = group.get("group_external_id", "unknown")
             self._record_event(
                 run_id=run_id,
@@ -377,8 +420,9 @@ class FacebookCollector:
                 payload={"fetched_posts": len(posts), "group_index": idx},
             )
 
-        removed_assets = self.db.prune_facebook_posts(retention_days=self.settings.facebook_retention_days)
-        self._delete_removed_assets(removed_assets)
+        if total_kept > 0 or not errors:
+            removed_assets = self.db.prune_facebook_posts(retention_days=self.settings.facebook_retention_days)
+            self._delete_removed_assets(removed_assets)
 
         if errors and total_kept > 0:
             status = "partial_failed"
@@ -411,18 +455,29 @@ class FacebookCollector:
 
         return summary
 
+    @staticmethod
+    def _needs_resume(group: dict[str, Any], watermark: datetime) -> bool:
+        crawled_at = _parse_dt(group.get("last_crawled_at"))
+        if crawled_at is None:
+            return True
+        return crawled_at < watermark
+
     def _delete_removed_assets(self, removed_assets: list[dict[str, str]]) -> None:
+        screenshots_root = Path(self.settings.facebook_screenshots_dir)
+        raw_root = Path(self.settings.facebook_raw_dir)
         for item in removed_assets:
             screenshot = item.get("screenshot_path")
             raw_snapshot = item.get("raw_snapshot_path")
             if screenshot:
-                self._safe_delete(Path(self.settings.facebook_screenshots_dir) / screenshot)
+                self._safe_delete(screenshots_root / screenshot, screenshots_root)
             if raw_snapshot:
-                self._safe_delete(Path(self.settings.facebook_raw_dir) / raw_snapshot)
+                self._safe_delete(raw_root / raw_snapshot, raw_root)
 
     @staticmethod
-    def _safe_delete(path: Path) -> None:
+    def _safe_delete(path: Path, root: Path) -> None:
         try:
+            if not path_is_within(path, root):
+                return
             path.resolve().unlink(missing_ok=True)
         except OSError:
             return

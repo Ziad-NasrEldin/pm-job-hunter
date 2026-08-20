@@ -40,7 +40,9 @@ Local-first FastAPI app that aggregates:
 2. Install Playwright browser runtime once:
    - `playwright install chromium`
 3. Copy `.env.local.example` to `.env.local` and set values.
+   - Leave `FACEBOOK_ENABLED=false` and `ENABLE_SCHEDULER=false` until you want those features.
    - Keep `FACEBOOK_HEADLESS=false` for more reliable discovery/crawling.
+   - Bind only to localhost. This app has no login and stores Facebook session cookies plus lead PII on disk.
 4. Bootstrap Facebook login session once:
    - Recommended: use dashboard quick action `Facebook Login` (opens browser and waits for login automatically).
    - CLI fallback: `python -m app.cli facebook-login`

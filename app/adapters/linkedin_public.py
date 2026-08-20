@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from hashlib import sha1
 from html import unescape
 from urllib.parse import parse_qs, urlparse
 
@@ -43,7 +44,7 @@ def _extract_external_id(card: str, job_url: str) -> str:
         maybe = qs.get("currentJobId")
         if maybe:
             return maybe[0]
-    return str(abs(hash(job_url)))
+    return sha1(job_url.encode("utf-8")).hexdigest()[:16]
 
 
 class LinkedInPublicAdapter(JobAdapter):
@@ -68,7 +69,7 @@ class LinkedInPublicAdapter(JobAdapter):
             time_match = TIME_RE.search(card)
             if time_match:
                 try:
-                    posted_at = datetime.fromisoformat(time_match.group(1))
+                    posted_at = datetime.fromisoformat(time_match.group(1).replace("Z", "+00:00"))
                 except ValueError:
                     posted_at = None
 

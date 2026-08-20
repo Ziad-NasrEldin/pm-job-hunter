@@ -35,7 +35,7 @@ def run_collect() -> int:
             }
         )
     )
-    return 0 if result.status != "failed" else 1
+    return 0 if result.status == "success" else 1
 
 
 def run_digest() -> int:
@@ -72,7 +72,7 @@ def run_facebook_discover() -> int:
             }
         )
     )
-    return 0 if result.status not in {"failed", "disabled"} else 1
+    return 0 if result.status == "success" else 1
 
 
 def run_facebook_collect() -> int:
@@ -93,7 +93,7 @@ def run_facebook_collect() -> int:
             }
         )
     )
-    return 0 if result.status not in {"failed", "disabled"} else 1
+    return 0 if result.status == "success" else 1
 
 
 def main() -> int:

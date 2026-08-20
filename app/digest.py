@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from html import escape
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from app.config import Settings
 from app.db import Database
 from app.models import DigestItem
+
+
+def _safe_http_url(url: str) -> bool:
+    parsed = urlparse(url or "")
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 class DigestService:
@@ -19,16 +26,17 @@ class DigestService:
         rows = []
         for item in items:
             posted = item.posted_at.date().isoformat() if item.posted_at else "N/A"
+            apply_url = item.apply_url if _safe_http_url(item.apply_url) else "#"
             rows.append(
                 (
                     "<tr>"
-                    f"<td>{item.title}</td>"
-                    f"<td>{item.company}</td>"
-                    f"<td>{item.location}</td>"
-                    f"<td>{item.role_family}</td>"
+                    f"<td>{escape(item.title)}</td>"
+                    f"<td>{escape(item.company)}</td>"
+                    f"<td>{escape(item.location)}</td>"
+                    f"<td>{escape(item.role_family)}</td>"
                     f"<td>{item.early_career_score:.2f}</td>"
-                    f"<td>{posted}</td>"
-                    f'<td><a href="{item.apply_url}">Apply</a></td>'
+                    f"<td>{escape(posted)}</td>"
+                    f'<td><a href="{escape(apply_url, quote=True)}">Apply</a></td>'
                     "</tr>"
                 )
             )

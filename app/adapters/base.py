@@ -59,6 +59,9 @@ class JobAdapter(ABC):
                 return resp
             except (httpx.RequestError, httpx.HTTPStatusError) as exc:
                 last_error = exc
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if isinstance(status_code, int) and 400 <= status_code < 500 and status_code != 429:
+                    break
                 if attempt == retries - 1:
                     break
                 time.sleep(backoff * (2**attempt))

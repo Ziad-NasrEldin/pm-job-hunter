@@ -15,7 +15,11 @@ def _default_runtime_root() -> Path:
     local_app_data = os.getenv("LOCALAPPDATA")
     if local_app_data:
         return Path(local_app_data) / "PMJobHunter"
-    return Path.home() / "AppData" / "Local" / "PMJobHunter"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "PMJobHunter"
+    if sys.platform.startswith("win"):
+        return Path.home() / "AppData" / "Local" / "PMJobHunter"
+    return Path.home() / ".local" / "share" / "PMJobHunter"
 
 
 def _resolve_env_file(path: str) -> Path:
@@ -104,14 +108,18 @@ def _get_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _get_int(name: str, default: int) -> int:
+def _get_int(name: str, default: int, *, minimum: int | None = None) -> int:
     value = os.getenv(name)
     if value is None:
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
+        parsed = default
+    else:
+        try:
+            parsed = int(value)
+        except ValueError:
+            parsed = default
+    if minimum is not None:
+        return max(minimum, parsed)
+    return parsed
 
 
 def _get_float(name: str, default: float) -> float:
@@ -138,7 +146,7 @@ class Settings:
     resend_api_key: str | None = None
     digest_from_email: str | None = None
     digest_to_email: str | None = None
-    enable_scheduler: bool = True
+    enable_scheduler: bool = False
     retention_days: int = 90
     linkedin_max_pages: int = 5
     linkedin_rate_limit_seconds: float = 1.0
@@ -171,7 +179,7 @@ class Settings:
     )
     greenhouse_boards: list[str] = field(default_factory=list)
     lever_companies: list[str] = field(default_factory=list)
-    facebook_enabled: bool = True
+    facebook_enabled: bool = False
     facebook_profile_dir: str = "./data/facebook_profile"
     facebook_storage_state_path: str = "./data/facebook_storage_state.json"
     facebook_headless: bool = False
@@ -271,8 +279,8 @@ class Settings:
             resend_api_key=os.getenv("RESEND_API_KEY"),
             digest_from_email=os.getenv("DIGEST_FROM_EMAIL"),
             digest_to_email=os.getenv("DIGEST_TO_EMAIL"),
-            enable_scheduler=_get_bool("ENABLE_SCHEDULER", True),
-            retention_days=_get_int("RETENTION_DAYS", 90),
+            enable_scheduler=_get_bool("ENABLE_SCHEDULER", False),
+            retention_days=_get_int("RETENTION_DAYS", 90, minimum=1),
             linkedin_max_pages=_get_int("LINKEDIN_MAX_PAGES", 5),
             linkedin_rate_limit_seconds=_get_float("LINKEDIN_RATE_LIMIT_SECONDS", 1.0),
             request_timeout_seconds=_get_float("REQUEST_TIMEOUT_SECONDS", 20.0),
@@ -306,12 +314,12 @@ class Settings:
             ),
             greenhouse_boards=_get_list("GREENHOUSE_BOARDS", []),
             lever_companies=_get_list("LEVER_COMPANIES", []),
-            facebook_enabled=_get_bool("FACEBOOK_ENABLED", True),
+            facebook_enabled=_get_bool("FACEBOOK_ENABLED", False),
             facebook_profile_dir=facebook_profile_dir_value,
             facebook_storage_state_path=facebook_storage_state_value,
             facebook_headless=_get_bool("FACEBOOK_HEADLESS", False),
             facebook_crawl_days=_get_int("FACEBOOK_CRAWL_DAYS", 30),
-            facebook_retention_days=_get_int("FACEBOOK_RETENTION_DAYS", 90),
+            facebook_retention_days=_get_int("FACEBOOK_RETENTION_DAYS", 90, minimum=1),
             facebook_collection_interval_hours=_get_int("FACEBOOK_COLLECTION_INTERVAL_HOURS", 2),
             facebook_discovery_hour=_get_int("FACEBOOK_DISCOVERY_HOUR", 8),
             facebook_discovery_minute=_get_int("FACEBOOK_DISCOVERY_MINUTE", 0),

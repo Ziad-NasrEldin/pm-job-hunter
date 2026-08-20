@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime, timedelta
 from hashlib import sha1
 from pathlib import Path
+from threading import Lock
 from urllib.parse import quote_plus
 
 from app.config import Settings
@@ -65,6 +67,7 @@ _GROUP_NAME_NOISE_PREFIXES = [
 
 class FacebookGroupsAdapter:
     source_name = "facebook_groups"
+    _playwright_lock = Lock()
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -117,7 +120,13 @@ class FacebookGroupsAdapter:
             raise
 
     def bootstrap_login(self) -> dict[str, str]:
-        playwright, browser, context = self._open_login_context(headless=False)
+        if not self._playwright_lock.acquire(timeout=120):
+            raise RuntimeError("Facebook browser is busy with another action")
+        try:
+            playwright, browser, context = self._open_login_context(headless=False)
+        except Exception:
+            self._playwright_lock.release()
+            raise
         try:
             page = context.new_page()
             page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=90_000)
@@ -136,6 +145,10 @@ class FacebookGroupsAdapter:
             state_path = Path(self.settings.facebook_storage_state_path).resolve()
             state_path.parent.mkdir(parents=True, exist_ok=True)
             context.storage_state(path=str(state_path))
+            try:
+                state_path.chmod(0o600)
+            except OSError:
+                pass
 
             return {
                 "status": "ready",
@@ -145,8 +158,9 @@ class FacebookGroupsAdapter:
             context.close()
             browser.close()
             playwright.stop()
+            self._playwright_lock.release()
 
-    def validate_session(self) -> dict[str, str | bool]:
+    def inspect_session_file(self) -> dict[str, str | bool]:
         state_path = Path(self.settings.facebook_storage_state_path).resolve()
         if not state_path.exists():
             return {
@@ -154,16 +168,48 @@ class FacebookGroupsAdapter:
                 "session_valid": False,
                 "reason": f"Session file missing at {state_path}",
             }
-        if sync_playwright is None:
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
             return {
                 "session_file_present": True,
-                "session_valid": True,
-                "reason": "Session file present (Playwright unavailable for live validation).",
+                "session_valid": False,
+                "reason": "Session file is not valid JSON. Re-login from dashboard.",
             }
+        cookies = payload.get("cookies") if isinstance(payload, dict) else None
+        if not isinstance(cookies, list):
+            return {
+                "session_file_present": True,
+                "session_valid": False,
+                "reason": "Session file has no cookies. Re-login from dashboard.",
+            }
+        names = {cookie.get("name") for cookie in cookies if isinstance(cookie, dict)}
+        if "c_user" in names:
+            return {"session_file_present": True, "session_valid": True, "reason": "ok"}
+        return {
+            "session_file_present": True,
+            "session_valid": False,
+            "reason": "Session file missing c_user cookie. Re-login from dashboard.",
+        }
 
+    def validate_session(self) -> dict[str, str | bool]:
+        inspected = self.inspect_session_file()
+        if not inspected.get("session_file_present") or not inspected.get("session_valid"):
+            return inspected
+        if sync_playwright is None:
+            inspected["reason"] = "Session file looks valid (Playwright unavailable for live validation)."
+            return inspected
+
+        if not self._playwright_lock.acquire(timeout=120):
+            return {
+                "session_file_present": True,
+                "session_valid": False,
+                "reason": "Facebook browser is busy with another action",
+            }
         try:
             playwright, browser, context = self._open_runtime_context(headless=True)
         except Exception as exc:  # noqa: BLE001
+            self._playwright_lock.release()
             message = str(exc).strip() or exc.__class__.__name__
             return {
                 "session_file_present": True,
@@ -193,9 +239,16 @@ class FacebookGroupsAdapter:
             context.close()
             browser.close()
             playwright.stop()
+            self._playwright_lock.release()
 
     def discover_groups(self) -> list[FacebookGroupCandidate]:
-        playwright, browser, context = self._open_runtime_context(headless=self.settings.facebook_headless)
+        if not self._playwright_lock.acquire(timeout=120):
+            raise RuntimeError("Facebook browser is busy with another action")
+        try:
+            playwright, browser, context = self._open_runtime_context(headless=self.settings.facebook_headless)
+        except Exception:
+            self._playwright_lock.release()
+            raise
         try:
             page = context.new_page()
             page.goto("https://www.facebook.com/me", wait_until="domcontentloaded", timeout=90_000)
@@ -232,6 +285,7 @@ class FacebookGroupsAdapter:
             context.close()
             browser.close()
             playwright.stop()
+            self._playwright_lock.release()
 
     def fetch_group_posts(self, group: dict[str, str]) -> list[FacebookPost]:
         groups_data, errors = self.fetch_groups_posts([group])
@@ -248,7 +302,13 @@ class FacebookGroupsAdapter:
         groups_data: dict[str, list[FacebookPost]] = {}
         errors: dict[str, str] = {}
 
-        playwright, browser, context = self._open_runtime_context(headless=self.settings.facebook_headless)
+        if not self._playwright_lock.acquire(timeout=120):
+            raise RuntimeError("Facebook browser is busy with another action")
+        try:
+            playwright, browser, context = self._open_runtime_context(headless=self.settings.facebook_headless)
+        except Exception:
+            self._playwright_lock.release()
+            raise
         try:
             page = context.new_page()
             page.goto("https://www.facebook.com/me", wait_until="domcontentloaded", timeout=90_000)
@@ -266,6 +326,7 @@ class FacebookGroupsAdapter:
             context.close()
             browser.close()
             playwright.stop()
+            self._playwright_lock.release()
 
     def _crawl_group_posts(self, *, page, group: dict[str, str]) -> list[FacebookPost]:
         group_url = group["group_url"]
@@ -333,7 +394,7 @@ class FacebookGroupsAdapter:
 
             description = f"{name}"
             score = score_group_relevance(name=name, description=description, keyword=keyword)
-            if score < 0.35:
+            if score < 0.5:
                 continue
 
             group_external_id = parse_group_external_id(href)
@@ -362,7 +423,7 @@ class FacebookGroupsAdapter:
         candidates: list[FacebookGroupCandidate] = []
         for item in parse_group_candidates_from_html(html, discovered_keyword=keyword):
             score = score_group_relevance(item["name"], item["description"], keyword)
-            if score < 0.35:
+            if score < 0.5:
                 continue
             candidate = FacebookGroupCandidate(
                 group_external_id=item["group_external_id"],
@@ -402,13 +463,16 @@ class FacebookGroupsAdapter:
     def _ensure_group_accessible(self, page, group_url: str) -> None:
         try:
             unavailable = page.get_by_text("This content isn't available right now", exact=False).count()
-            private_hint = page.get_by_text("Private group", exact=False).count()
         except PlaywrightError:
             unavailable = 0
-            private_hint = 0
 
-        if unavailable > 0 or private_hint > 0:
-            raise RuntimeError(f"Group is unavailable or private for this account: {group_url}")
+        try:
+            join_wall = page.get_by_text("Join this group to see posts", exact=False).count()
+        except PlaywrightError:
+            join_wall = 0
+
+        if unavailable > 0 or join_wall > 0:
+            raise RuntimeError(f"Group is unavailable or not visible for this account: {group_url}")
 
     def _extract_post_from_article(
         self,
@@ -417,6 +481,13 @@ class FacebookGroupsAdapter:
         group: dict[str, str],
         cutoff: datetime,
     ) -> FacebookPost | None:
+        try:
+            more = article.get_by_text(re.compile(r"See more|عرض المزيد", re.I)).first
+            if more.count() > 0:
+                more.click(timeout=800)
+        except (PlaywrightTimeoutError, PlaywrightError):
+            pass
+
         try:
             post_text = article.inner_text(timeout=2_000)
         except (PlaywrightTimeoutError, PlaywrightError):
@@ -435,12 +506,22 @@ class FacebookGroupsAdapter:
 
         post_external_id = self._extract_post_external_id(permalink, post_text)
         posted_at = self._extract_post_datetime(article)
-        if posted_at is not None and posted_at < cutoff:
+        if posted_at is None or posted_at < cutoff:
             return None
 
         category_tag = classify_job_category(post_text)
         phone_numbers = extract_phone_numbers(post_text)
         whatsapp_links = extract_whatsapp_links(post_text)
+        for link in links:
+            lowered = link.lower()
+            if lowered.startswith("tel:"):
+                phone = extract_phone_numbers(link.split(":", 1)[-1])
+                for item in phone:
+                    if item not in phone_numbers:
+                        phone_numbers.append(item)
+            for item in extract_whatsapp_links(link):
+                if item not in whatsapp_links:
+                    whatsapp_links.append(item)
 
         screenshot_path = self._save_post_screenshot(article, group["group_external_id"], post_external_id)
         raw_snapshot_path = self._save_raw_snapshot(article, group["group_external_id"], post_external_id)

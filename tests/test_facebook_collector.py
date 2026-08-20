@@ -67,6 +67,13 @@ def test_collection_runtime_error_is_single_and_clear(tmp_path):
     assert result.status == "failed"
     assert len(result.errors) == 1
     assert result.errors[0] == "facebook_groups: adapter boom"
+    groups = db.list_facebook_groups(active_only=True)
+    assert groups[0]["last_crawled_at"] is None
+
+    result2 = collector.run_once(resume=True)
+    assert result2.status == "failed"
+    assert result2.total_fetched == 0
+    assert groups[0]["last_crawled_at"] is None
 
 
 def test_collection_blocks_when_session_invalid(tmp_path):
